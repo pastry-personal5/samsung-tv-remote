@@ -356,15 +356,28 @@ pub fn main_window(
     .height(Length::Fill)
     .style(|_| container::Style::default().background(sidebar_color()));
 
+    let control_state = view_model.control_state();
+    let primary_view_element = primary_view(
+        view_model.primary_view(),
+        control_state,
+        wake_stage,
+        wake_configured,
+        wake_tick,
+    );
+
+    // Check if overlay is needed for Remote View when actions are disabled
+    let scrollable_area = if view_model.primary_view() == PrimaryView::Remote
+        && !control_state.remote_actions_enabled()
+    {
+        let overlay =
+            create_action_disabled_overlay(control_state, wake_stage, primary_view_element);
+        scrollable(overlay).height(Length::Fill)
+    } else {
+        scrollable(primary_view_element).height(Length::Fill)
+    };
+
     let main_pane = column![
-        scrollable(primary_view(
-            view_model.primary_view(),
-            view_model.control_state(),
-            wake_stage,
-            wake_configured,
-            wake_tick
-        ))
-        .height(Length::Fill),
+        scrollable_area,
         split_bar(view_model.message_pane_height()),
         global_messages(view_model),
     ]
@@ -444,95 +457,94 @@ fn remote_view(
     .center_x(Length::Fill)
     .width(Length::Fixed(REMOTE_DISPLAY_WIDTH));
 
-    // If actions are disabled, create an overlay message
-    if !control_state.remote_actions_enabled() {
-        // Create overlay message based on the reason
-        let message = if control_state.selected_device.is_none() {
-            "No TV selected. Open Settings to choose a TV."
-        } else if !control_state.pairing.guidance.is_empty() {
-            control_state.pairing.guidance
-        } else if !control_state.connection.guidance.is_empty() {
-            control_state.connection.guidance
-        } else {
-            "Remote actions are unavailable. Check the TV and try again."
-        };
+    titled_frame("Remote View", remote_image.into(), None)
+}
 
-        // Determine if Do Magic button should be shown
-        let can_do_magic = control_state.selected_device.is_some();
-        let is_wake_busy = matches!(
-            wake_stage,
-            WakeStage::CheckingConnection | WakeStage::PacketSending | WakeStage::Reconnecting
-        );
-
-        // Create the Do Magic button element
-        let magic_button: Element<'_, Message> = if can_do_magic && !is_wake_busy {
-            button(text("Do Magic").size(14))
-                .on_press(Message::Wake)
-                .padding([4, 12])
-                .style(action_button_style)
-                .into()
-        } else if can_do_magic && is_wake_busy {
-            // Show disabled button when wake is in progress
-            button(text("Do Magic").size(14))
-                .padding([4, 12])
-                .style(|_theme: &Theme, _status| button::Style {
-                    background: Some(Background::Color(Color::from_rgba8(6, 9, 12, 0.5))),
-                    text_color: Color::from_rgb8(145, 157, 167),
-                    border: Border {
-                        color: Color::from_rgba8(6, 9, 12, 0.5),
-                        width: 1.0,
-                        radius: 8.0.into(),
-                    },
-                    ..button::Style::default()
-                })
-                .into()
-        } else {
-            Space::new().width(Length::Fixed(1.0)).into()
-        };
-
-        // Create a semi-transparent overlay that fills the entire scrollable area
-        // with the message and Do Magic button positioned in the center-right
-        let overlay = container(column![
-            Space::new().height(Length::Fill),
-            row![
-                Space::new().width(Length::Fill),
-                column![
-                    text(message)
-                        .size(14)
-                        .style(|_| ::iced::widget::text::Style {
-                            color: Some(Color::from_rgb8(226, 234, 241)),
-                        }),
-                    magic_button
-                ]
-                .spacing(4)
-                .align_x(Horizontal::Right),
-                Space::new().width(Length::Fixed(16.0)),
-            ]
-            .align_y(Alignment::Center),
-            Space::new().height(Length::Fill),
-        ])
-        .width(Length::Fill)
-        .height(Length::Fill)
-        .padding([12, 24])
-        .style(|_theme: &Theme| container::Style {
-            background: Some(Background::Color(Color::from_rgba8(6, 9, 12, 0.7))),
-            border: Border {
-                color: Color::from_rgb8(91, 166, 224),
-                width: 1.0,
-                radius: 8.0.into(),
-            },
-            ..container::Style::default()
-        });
-
-        // Stack the overlay (filling scrollable area) with remote image below
-        let content = column![overlay, remote_image]
-            .spacing(12)
-            .align_x(Horizontal::Center);
-
-        titled_frame("Remote View", content.into(), None)
+fn create_action_disabled_overlay<'a>(
+    control_state: &'a RemoteControlViewState,
+    wake_stage: WakeStage,
+    content: Element<'a, Message>,
+) -> Element<'a, Message> {
+    // Create overlay message based on the reason
+    let message = if control_state.selected_device.is_none() {
+        "No TV selected. Open Settings to choose a TV."
+    } else if !control_state.pairing.guidance.is_empty() {
+        control_state.pairing.guidance
+    } else if !control_state.connection.guidance.is_empty() {
+        control_state.connection.guidance
     } else {
-        titled_frame("Remote View", remote_image.into(), None)
-    }
+        "Remote actions are unavailable. Check the TV and try again."
+    };
+
+    // Determine if Do Magic button should be shown
+    let can_do_magic = control_state.selected_device.is_some();
+    let is_wake_busy = matches!(
+        wake_stage,
+        WakeStage::CheckingConnection | WakeStage::PacketSending | WakeStage::Reconnecting
+    );
+
+    // Create the Do Magic button element
+    let magic_button: Element<'_, Message> = if can_do_magic && !is_wake_busy {
+        button(text("Do Magic").size(14))
+            .on_press(Message::Wake)
+            .padding([4, 12])
+            .style(action_button_style)
+            .into()
+    } else if can_do_magic && is_wake_busy {
+        // Show disabled button when wake is in progress
+        button(text("Do Magic").size(14))
+            .padding([4, 12])
+            .style(|_theme: &Theme, _status| button::Style {
+                background: Some(Background::Color(Color::from_rgba8(6, 9, 12, 0.5))),
+                text_color: Color::from_rgb8(145, 157, 167),
+                border: Border {
+                    color: Color::from_rgba8(6, 9, 12, 0.5),
+                    width: 1.0,
+                    radius: 8.0.into(),
+                },
+                ..button::Style::default()
+            })
+            .into()
+    } else {
+        Space::new().width(Length::Fixed(1.0)).into()
+    };
+
+    // Create a semi-transparent overlay stacked over the content
+    // Render overlay after content so it appears on top due to rendering order
+    let overlay = container(column![
+        Space::new().height(Length::Fill),
+        row![
+            Space::new().width(Length::Fill),
+            column![
+                text(message)
+                    .size(14)
+                    .style(|_| ::iced::widget::text::Style {
+                        color: Some(Color::from_rgb8(226, 234, 241)),
+                    }),
+                magic_button
+            ]
+            .spacing(4)
+            .align_x(Horizontal::Right),
+            Space::new().width(Length::Fixed(16.0)),
+        ]
+        .align_y(Alignment::Center),
+        Space::new().height(Length::Fill),
+    ])
+    .width(Length::Fill)
+    .height(Length::Fill)
+    .padding([12, 24])
+    .style(|_theme: &Theme| container::Style {
+        background: Some(Background::Color(Color::from_rgba8(6, 9, 12, 0.4))),
+        border: Border {
+            color: Color::from_rgb8(91, 166, 224),
+            width: 1.0,
+            radius: 8.0.into(),
+        },
+        ..container::Style::default()
+    });
+
+    // Stack content first, then overlay (rendered last = appears on top)
+    column![content, overlay].into()
 }
 
 fn power_toggle_button(
