@@ -509,8 +509,9 @@ fn create_action_disabled_overlay<'a>(
         Space::new().width(Length::Fixed(1.0)).into()
     };
 
-    // Create a semi-transparent overlay stacked over the content
-    // Render overlay after content so it appears on top due to rendering order
+    // Semi-transparent overlay layered over the content via `stack!`, sized to
+    // fill the same bounds as the scrollable area beneath it (main pane minus
+    // sidebar and the global message pane).
     let overlay = container(column![
         Space::new().height(Length::Fill),
         row![
@@ -534,7 +535,7 @@ fn create_action_disabled_overlay<'a>(
     .height(Length::Fill)
     .padding([12, 24])
     .style(|_theme: &Theme| container::Style {
-        background: Some(Background::Color(Color::from_rgba8(6, 9, 12, 0.4))),
+        background: Some(Background::Color(Color::from_rgba8(6, 9, 12, 0.75))),
         border: Border {
             color: Color::from_rgb8(91, 166, 224),
             width: 1.0,
@@ -543,8 +544,9 @@ fn create_action_disabled_overlay<'a>(
         ..container::Style::default()
     });
 
-    // Stack content first, then overlay (rendered last = appears on top)
-    column![content, overlay].into()
+    // `opaque` keeps clicks on the overlay from reaching the disabled controls
+    // underneath it.
+    stack![scrollable(content).height(Length::Fill), opaque(overlay)].into()
 }
 
 fn power_toggle_button(
