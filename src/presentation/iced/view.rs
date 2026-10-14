@@ -310,7 +310,8 @@ fn titled_frame(
             row![active_tab(title), Space::new().width(Length::Fill)].align_y(Alignment::End),
             content
         ]
-        .spacing(12),
+        .spacing(12)
+        .align_x(Horizontal::Center),
     )
     .padding(22)
     .width(Length::Fill)
