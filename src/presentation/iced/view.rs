@@ -1056,6 +1056,7 @@ pub fn settings_window(options: SettingsView<'_>) -> Element<'_, Message> {
             let selected_row = selected_id == Some(device.id);
             let checked_row = observed_matches(&device.host, observed_host, has_fingerprint);
             let actions: Element<'_, Message> = if selected_row {
+                let info_tooltip_text = "Check TV: Verify the TV is reachable. Re-pair: Establish secure pairing. Retry Connection: Reconnect to TV. Forget: Remove from saved devices.";
                 row![
                     button("Check TV")
                         .on_press_maybe(
@@ -1075,12 +1076,27 @@ pub fn settings_window(options: SettingsView<'_>) -> Element<'_, Message> {
                                 .then_some(Message::ConnectSelected)
                         )
                         .style(action_button_style),
-                    button("Forget Selected TV")
+                    button("Forget")
                         .on_press_maybe(
                             (!pairing_pending && !forget_pending)
                                 .then_some(Message::ForgetSelected)
                         )
                         .style(action_button_style),
+                    tooltip(
+                        button(text("ⓘ").size(12).style(|_| ::iced::widget::text::Style {
+                            color: Some(graphite(110)),
+                        }))
+                        .padding([4, 6])
+                        .style(|_theme: &Theme, _status| button::Style {
+                            background: None,
+                            text_color: graphite(110),
+                            border: Border::default(),
+                            ..button::Style::default()
+                        }),
+                        info_tooltip_text,
+                        tooltip::Position::Top,
+                    )
+                    .style(tooltip_style),
                 ]
                 .spacing(6)
                 .align_y(Alignment::Center)
