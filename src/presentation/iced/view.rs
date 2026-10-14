@@ -8,7 +8,8 @@ use crate::application::wake::WakeInterface;
 use crate::{RemoteAction, SendRemoteAction};
 use ::iced::alignment::Horizontal;
 use ::iced::widget::{
-    button, column, container, radio, row, scrollable, text, text_input, tooltip, Space,
+    button, column, container, opaque, radio, row, scrollable, stack, text, text_input, tooltip,
+    Space,
 };
 use ::iced::{Alignment, Background, Border, Color, Element, Length, Theme};
 
@@ -367,14 +368,12 @@ pub fn main_window(
     );
 
     // Check if overlay is needed for Remote View when actions are disabled
-    let scrollable_area = if view_model.primary_view() == PrimaryView::Remote
+    let scrollable_area: Element<'_, Message> = if view_model.primary_view() == PrimaryView::Remote
         && !control_state.remote_actions_enabled()
     {
-        let overlay =
-            create_action_disabled_overlay(control_state, wake_stage, primary_view_element);
-        scrollable(overlay).height(Length::Fill)
+        create_action_disabled_overlay(control_state, wake_stage, primary_view_element)
     } else {
-        scrollable(primary_view_element).height(Length::Fill)
+        scrollable(primary_view_element).height(Length::Fill).into()
     };
 
     let main_pane = column![
@@ -1056,7 +1055,7 @@ pub fn settings_window(options: SettingsView<'_>) -> Element<'_, Message> {
             let selected_row = selected_id == Some(device.id);
             let checked_row = observed_matches(&device.host, observed_host, has_fingerprint);
             let actions: Element<'_, Message> = if selected_row {
-                let info_tooltip_text = "Check TV: Verify the TV is reachable. Re-pair: Establish secure pairing. Retry Connection: Reconnect to TV. Forget: Remove from saved devices.";
+                let info_tooltip_text = "Check TV: Verify the TV is reachable.\nRe-pair: Establish secure pairing.\nRetry Connection: Reconnect to TV.\nForget: Remove from saved devices.";
                 row![
                     button("Check TV")
                         .on_press_maybe(
