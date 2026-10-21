@@ -8,6 +8,14 @@ Current references:
 - [Contribution guide](contribution-guide.md) — development and validation.
 - [Development process](development-process.md) and [roadmap](roadmap.md) — planning.
 - [Phase 1](phase-1/phase-1.md) — milestone status and open acceptance work.
+- [Phase 2](phase-2/phase-2.md) — active control server, GUI client, and
+  Streamable HTTP MCP refactor.
+- [P2-M6 contract review](phase-2/milestone-06-overview.md) — current
+  architecture, API, MCP, migration and signed-prototype evidence.
+- [P2-M6 human test runbook](phase-2/milestone-06-human-runbook.md) — commands
+  for the isolated macOS account and remaining platform checks.
+- [Control API Server internals](phase-2/control-server-internals.md) — planned
+  server state owner, effect boundaries, recovery, and verification.
 - [Version v1.0.0 release note](releases/v1.0.0.md).
 
 [Research](research/) contains open proposals and future-feature findings.

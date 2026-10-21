@@ -31,7 +31,7 @@ not a stable Samsung public API contract. [Smart View SDK overview](https://deve
 
 ## Control surfaces
 
-### 1. Paired local consumer remote: best Phase 2 fit
+### 1. Paired local consumer remote: best future local-feature fit
 
 This is the existing secure, same-LAN connection. It is low latency and has no
 Samsung-account dependency, but availability varies by model, firmware,
@@ -128,18 +128,15 @@ third-party apps. [MediaController API](https://developer.samsung.com/smarttv/de
 - Unattended cloud access without a user-authorized SmartThings integration.
 - State from Tizen APIs owned by another app.
 
-## Product boundary for Phase 2
+## Future product boundary
 
-Phase 2 should deliver conditional, local control for the app's existing
-Sources, Apps, and Text Input destinations. It should add a single
+The server-first [Phase 2](../phase-2/phase-2.md) supersedes this research's
+original feature sequencing. Sources, Apps, and Text Input remain placeholders
+and candidates for a later feature phase. That phase should add a
 capability/proof vocabulary so an accepted command is never represented as an
-observed TV state. It should *not* add SmartThings OAuth, a hosted webhook
-service, Matter commissioning, an owned Tizen application, or unsupported
-telemetry.
-
-That sequencing gives users three visible, locally useful features without
-expanding the product into an account-linked cloud service. Cloud observation
-should be a separately planned phase after a backend and privacy decision.
+observed TV state. SmartThings OAuth, a hosted webhook, Matter commissioning,
+an owned Tizen application, and unsupported telemetry remain separate
+decisions. The hardware matrix below applies when those features are planned.
 
 ## Hardware validation matrix
 

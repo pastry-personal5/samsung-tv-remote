@@ -2,6 +2,10 @@
 
 Status: Active
 
+This document describes the current single-process implementation. The
+[Phase 2 target architecture](phase-2/target-architecture.md) plans a separate
+Control API Server with GUI and MCP clients; it is not implemented yet.
+
 Samsung TV Remote is one Rust package. Its dependency direction is
 `presentation → application → domain` and `infrastructure → application/domain`.
 `main.rs` wires the adapters. UI code never constructs Samsung wire frames or
