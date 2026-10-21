@@ -45,7 +45,7 @@ shortcut chrome.
 
 The Discovery page keeps Saved TVs separate from unsaved candidates. A Saved TV
 row can be selected; the selected row offers Check TV, Re-pair after a matching
-check, Retry Connection, and Forget Selected TV. Retry reconnects that selected
+check, Retry Connection, and Forget. Retry reconnects that selected
 TV; Forget removes that row's saved record and pairing credentials. A candidate
 row can be staged, checked, and then paired. Manual entry uses the same check
 and pair path. Selecting a candidate never pairs it automatically. A successful

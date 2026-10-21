@@ -76,9 +76,9 @@ The Settings Sidebar has Discovery and Wake on LAN. The Discovery page groups TV
 List, Discovery and Pairing, and Guidance cards.
 
 TV List shows Saved TVs with a selection radio. The selected Saved TV row offers
-Check TV, Re-pair after a matching check, Retry Connection, and Forget Selected
-TV in its Actions column. Retry Connection reconnects the selected row. Forget
-Selected TV removes its saved record and pairing credentials. Unsaved discovered
+Check TV, Re-pair after a matching check, Retry Connection, and Forget in its
+Actions column. Retry Connection reconnects the selected row. Forget
+removes its saved record and pairing credentials. Unsaved discovered
 or manually entered hosts appear in a separate candidate list. Selecting a
 candidate stages its address without selecting it as the app's trusted TV. Check
 TV probes its secure endpoint on port 8002 and displays the observed certificate
