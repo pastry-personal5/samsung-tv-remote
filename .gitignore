@@ -2,3 +2,5 @@
 .DS_Store
 /*.d
 /*.rlib
+__pycache__/
+/.qwen/
