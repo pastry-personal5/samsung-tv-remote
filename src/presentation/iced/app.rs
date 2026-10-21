@@ -293,6 +293,20 @@ impl App {
                 self.probe_tv()
             }
             Message::ProbeTv => self.probe_tv(),
+            Message::CheckSelectedTv => {
+                let selected_id = self.coordinator.app_state.selected_device();
+                let Some(host) = self
+                    .coordinator
+                    .saved_devices
+                    .iter()
+                    .find(|device| Some(device.id) == selected_id)
+                    .map(|device| device.host.clone())
+                else {
+                    return Task::none();
+                };
+                self.tv_address = host.as_str().to_owned();
+                self.probe_tv()
+            }
             Message::ProbeFinished {
                 attempt,
                 host,
@@ -419,6 +433,24 @@ impl App {
                 session_id,
                 event,
             } => self.handle_session_event(generation, session_id, event),
+        }
+    }
+
+    /// Which recovery buttons the Power view may enable for the selected TV.
+    fn power_recovery(&self) -> view::PowerRecovery {
+        let selected_id = self.coordinator.app_state.selected_device();
+        let selected_host = self
+            .coordinator
+            .saved_devices
+            .iter()
+            .find(|device| Some(device.id) == selected_id)
+            .map(|device| &device.host);
+        let observed_host = self.coordinator.observed.as_ref().map(|(host, _)| host);
+        view::PowerRecovery {
+            available: selected_host.is_some()
+                && !self.coordinator.pair_pending
+                && self.coordinator.forget_pending.is_none(),
+            checked: selected_host.is_some() && selected_host == observed_host,
         }
     }
 
@@ -961,6 +993,7 @@ impl App {
                 self.coordinator.wake_stage,
                 self.coordinator.selected_wake_configured(),
                 self.wake_tick,
+                self.power_recovery(),
             )
         }
     }
@@ -1473,6 +1506,44 @@ mod tests {
             "Check the selected TV before re-pairing."
         );
         assert!(!app.coordinator.pair_pending);
+    }
+
+    #[test]
+    fn power_recovery_requires_a_check_of_the_selected_tv_before_re_pair() {
+        let device = saved_device(crate::DeviceId::new(24));
+        let (mut app, _) = App::new();
+        assert!(!app.power_recovery().available);
+
+        app.coordinator.app_state.select_device(device.display());
+        app.coordinator.saved_devices.push(device.clone());
+        let recovery = app.power_recovery();
+        assert!(recovery.available);
+        assert!(!recovery.checked);
+
+        app.coordinator.observed = Some((
+            device.host.clone(),
+            crate::application::tv_session::ProbeObservation {
+                pin: CertificatePin::from_der(b"selected TV certificate"),
+                name: None,
+                model: None,
+            },
+        ));
+        assert!(app.power_recovery().checked);
+
+        app.coordinator.pair_pending = true;
+        assert!(!app.power_recovery().available);
+    }
+
+    #[test]
+    fn checking_the_selected_tv_probes_its_saved_address() {
+        let device = saved_device(crate::DeviceId::new(25));
+        let (mut app, _) = App::new();
+        app.coordinator.app_state.select_device(device.display());
+        app.coordinator.saved_devices.push(device.clone());
+
+        let _ = app.update(Message::CheckSelectedTv);
+
+        assert_eq!(app.tv_address, device.host.as_str());
     }
 
     #[tokio::test]

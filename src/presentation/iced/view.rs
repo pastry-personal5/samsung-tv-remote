@@ -324,11 +324,21 @@ fn titled_frame(
         .into()
 }
 
+/// What the Power view's connection-recovery buttons may do right now.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PowerRecovery {
+    /// A saved TV is selected and no pairing or forget is in flight.
+    pub available: bool,
+    /// The selected TV's certificate was observed by a Check TV this session.
+    pub checked: bool,
+}
+
 pub fn main_window(
     view_model: &ViewModel,
     wake_stage: WakeStage,
     wake_configured: bool,
     wake_tick: bool,
+    recovery: PowerRecovery,
 ) -> Element<'_, Message> {
     let sidebar = container(
         column![
@@ -365,6 +375,7 @@ pub fn main_window(
         wake_stage,
         wake_configured,
         wake_tick,
+        recovery,
     );
 
     // Check if overlay is needed for Remote View when actions are disabled
@@ -421,9 +432,16 @@ fn primary_view(
     wake_stage: WakeStage,
     wake_configured: bool,
     wake_tick: bool,
+    recovery: PowerRecovery,
 ) -> Element<'static, Message> {
     match primary_view {
-        PrimaryView::Power => power_view(control_state, wake_stage, wake_configured, wake_tick),
+        PrimaryView::Power => power_view(
+            control_state,
+            wake_stage,
+            wake_configured,
+            wake_tick,
+            recovery,
+        ),
         PrimaryView::Remote => remote_view(control_state, wake_stage, wake_configured),
         PrimaryView::Sources => empty_primary_view(
             "Sources View",
@@ -608,6 +626,7 @@ fn power_view(
     stage: WakeStage,
     configured: bool,
     tick: bool,
+    recovery: PowerRecovery,
 ) -> Element<'static, Message> {
     let status = match stage {
         WakeStage::ConfigurationRequired => "Configure a wired or Wi-Fi MAC in TV Settings.",
@@ -752,6 +771,7 @@ fn power_view(
                 )
                 .center_x(Length::Fill),
             ),
+            titled_panel("Connection Recovery", recovery_buttons(recovery)),
             titled_panel(
                 "Wake Steps",
                 column![
@@ -780,6 +800,63 @@ fn power_view(
         .into(),
         None,
     )
+}
+
+fn recovery_buttons(recovery: PowerRecovery) -> Element<'static, Message> {
+    let recovery_button =
+        |label: &'static str, message: Message, enabled: bool, hint: &'static str| {
+            tooltip(
+                button(container(text(label).size(14)).center_y(Length::Fill))
+                    .height(50)
+                    .padding([0, 16])
+                    .on_press_maybe(enabled.then_some(message))
+                    .style(action_button_style),
+                hint,
+                tooltip::Position::Top,
+            )
+            .style(tooltip_style)
+        };
+    let no_tv = "Select a saved TV in Settings first.";
+    container(
+        row![
+            recovery_button(
+                "Check TV",
+                Message::CheckSelectedTv,
+                recovery.available,
+                if recovery.available {
+                    "Verify the TV is reachable and observe its certificate."
+                } else {
+                    no_tv
+                },
+            ),
+            recovery_button(
+                "Re-pair",
+                Message::ConfirmAndRepair,
+                recovery.available && recovery.checked,
+                if !recovery.available {
+                    no_tv
+                } else if recovery.checked {
+                    "Replace the saved pairing. Approve the prompt on the TV."
+                } else {
+                    "Run Check TV first."
+                },
+            ),
+            recovery_button(
+                "Retry Connection",
+                Message::ConnectSelected,
+                recovery.available,
+                if recovery.available {
+                    "Reconnect to the saved TV with the saved pairing."
+                } else {
+                    no_tv
+                },
+            ),
+        ]
+        .spacing(8)
+        .align_y(Alignment::Center),
+    )
+    .center_x(Length::Fill)
+    .into()
 }
 
 #[derive(Clone, Copy)]

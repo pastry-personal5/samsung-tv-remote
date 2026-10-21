@@ -73,6 +73,8 @@ pub enum Message {
     UseCandidate(TvHost),
     ProbeCandidate(TvHost),
     ProbeTv,
+    /// Checks the selected saved TV without opening Settings.
+    CheckSelectedTv,
     ProbeFinished {
         attempt: u64,
         host: TvHost,
