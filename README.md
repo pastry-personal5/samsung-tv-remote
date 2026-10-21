@@ -13,24 +13,25 @@ The app supports discovery or manual address entry, certificate checking,
 TV-approved pairing, saved-TV reconnect, remote keys, and Wake-on-LAN. Power,
 Remote, and Settings are functional.
 
+Release: [v1.0.0](docs/releases/v1.0.0.md).
+
 ## Why it's super-fast
 
 Many remote apps feel sluggish: a slow launch, a lag after every tap, a
 button press that takes a moment to reach the TV. Samsung TV Remote is built
 to remove that delay.
 
-- **100% Rust.** One native codebase, from the UI to the Samsung protocol,
-  with no interpreter or bridge layer between your click and the TV.
-- **No Electron, no web runtime.** The app opens instantly instead of loading
-  a browser engine first.
-- **No garbage collector.** No pauses, so every key press has predictable,
-  low latency.
-- **Direct to your TV.** Commands travel straight over your local network,
-  with no cloud round trip and no waiting on a remote server.
-- **Always ready.** Saved-TV reconnect and Wake-on-LAN get you from "I want to
-  watch" to a powered-on TV faster than reaching for a phone app.
-
-Release: [v1.0.0](docs/releases/v1.0.0.md).
+- **Rust end to end.** The UI, the application logic, and the Samsung protocol
+  client are one native Rust codebase, with no interpreter or bridge layer
+  between your click and the TV.
+- **No Electron, no web runtime.** The app starts without loading a browser
+  engine first.
+- **No garbage collector.** No collection pauses, so key presses stay
+  responsive.
+- **Direct to your TV.** Commands travel over your local network to the TV,
+  with no cloud round trip.
+- **Ready when you are.** Saved-TV reconnect and Wake-on-LAN skip discovery and
+  pairing, so a known TV is one click away.
 
 ![img](docs/archive/screenshots/v1.0.0-0000.jpg) ![img](docs/archive/screenshots/v1.0.0-0001.jpg)
 
