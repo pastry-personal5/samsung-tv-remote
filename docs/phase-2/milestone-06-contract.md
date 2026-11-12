@@ -197,7 +197,7 @@ are versioned at the adapter and map explicitly to application types.
 | `POST /v1/probes` | Envelope plus validated local `host` and optional client-bound `candidate_id`; receipt for a certificate observation. |
 | `POST /v1/pairings` | Envelope, attempt and observation IDs, exact full observed fingerprint, explicit confirmation, label, required observed generation, optional re-pair device ID. TV approval and durable commit are later results. |
 | `POST /v1/selection` | Envelope, `device_id`, `expected_generation`; receipt followed by durable selection event and new generation. |
-| `POST /v1/connections` | Envelope, selected `device_id` and generation; receipt for remote readiness. |
+| `POST /v1/connections` | Envelope, selected `device_id` and generation; optional boolean `only_if_idle` defaults false. When true, owner admission requires a disconnected idle selection and rejects ready/Connect/Pairing/Wake/storage/recovery conflicts without disturbing them. Receipt for remote readiness. |
 | `PUT /v1/devices/{id}/wake` | Envelope, saved ID, `selection_generation`, `expected_config_revision`, validated wired/Wi-Fi MACs and active interface; receipt for durable update. |
 | `POST /v1/remote-actions` | Envelope, selected ID, generation, semantic `RemoteAction` enum; receipt for one tracked action. `PowerToggle` owns disconnected probe-then-Wake; `PlayPause` is resolved by the server at dispatch. |
 | `POST /v1/wakes` | Envelope, selected ID and generation; receipt for one packet attempt and subsequent readiness observation. |

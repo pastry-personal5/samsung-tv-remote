@@ -117,7 +117,7 @@ impl App {
                     return Task::none();
                 }
                 self.publish(
-                    MessageSeverity::Information,
+                    history_severity(&receipt),
                     MessageSource::MainWindow,
                     history_message(&receipt),
                 )
@@ -144,7 +144,7 @@ impl App {
                     return Task::none();
                 }
                 self.publish(
-                    MessageSeverity::Information,
+                    history_severity(&receipt),
                     MessageSource::MainWindow,
                     history_message(&receipt),
                 )
@@ -255,6 +255,12 @@ pub(super) fn status_text(status: &Status) -> String {
 
 // History has no originating local command. Report retained facts only: never
 // set confirmation handles, clear drafts or enter Select/save/Connect chains.
+fn history_severity(receipt: &NativeReceipt) -> MessageSeverity {
+    match workflows::outcome_message(receipt).0 {
+        MessageSeverity::Warning => MessageSeverity::Warning,
+        _ => MessageSeverity::Information,
+    }
+}
 fn history_message(receipt: &NativeReceipt) -> String {
     match &receipt.outcome {
         Some(NativeOutcome::Discovered(_)) => {

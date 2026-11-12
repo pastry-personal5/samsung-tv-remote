@@ -1315,8 +1315,110 @@ async fn restored_history_keeps_precise_failure_and_cleanup_facts_without_local_
             .unwrap()
             .text
             .contains(expected));
+        assert_eq!(
+            app.view_model.messages().entries().back().unwrap().severity,
+            MessageSeverity::Warning
+        );
     }
     assert!(app.intents.is_empty() && client.requests.lock().unwrap().is_empty());
     assert_eq!(app.wake_wired, "unfinished draft");
     assert!(app.wake_dirty);
+}
+
+#[tokio::test]
+async fn cleared_selection_clears_saved_wake_fields_without_discarding_a_dirty_draft() {
+    for dirty in [false, true] {
+        let (mut app, client) = app();
+        let configuration = wake("02:00:00:00:00:01");
+        snapshot(
+            &mut app,
+            state(Some(DeviceId::new(1)), 4, 10, 0, configuration),
+        )
+        .await;
+        assert!(!app.wake_wired.is_empty());
+        if dirty {
+            app.begin_wake_edit();
+            app.wake_wired = "unfinished local draft".into();
+            app.wake_dirty = true;
+        }
+        snapshot(
+            &mut app,
+            state(None, 5, 11, 0, WakeConfiguration::default()),
+        )
+        .await;
+        if dirty {
+            assert_eq!(app.wake_wired, "unfinished local draft");
+            assert!(app.wake_dirty && app.workflows.conflict);
+        } else {
+            assert!(app.wake_wired.is_empty() && app.wake_wifi.is_empty());
+            assert!(app.wake_active.is_none());
+            assert!(!app.wake_dirty);
+        }
+        assert!(client.requests.lock().unwrap().is_empty());
+    }
+}
+
+#[tokio::test]
+async fn wake_failure_receipts_preserve_packet_facts_reason_and_warning_in_history() {
+    use crate::application::wake_transport::WakeSendError;
+    use crate::control_client::{model::WakeFailure, projection::NativeOutcome};
+    for (stage, packet, reason) in [
+        (
+            WakeStage::Failed(WakeFailure::Local(WakeSendError::SendFailed)),
+            "may have been sent",
+            "local packet send failed",
+        ),
+        (
+            WakeStage::Failed(WakeFailure::Local(WakeSendError::Permission)),
+            "No Wake packet was sent",
+            "Local Network permission denied",
+        ),
+        (
+            WakeStage::FailedAfterSend(WakeFailure::Timeout),
+            "Wake packet sent; delivery is unconfirmed",
+            "timed out",
+        ),
+        (
+            WakeStage::FailedAfterSend(WakeFailure::PairingRequired),
+            "Wake packet sent; delivery is unconfirmed",
+            "Re-pair in Settings",
+        ),
+    ] {
+        for history in [false, true] {
+            let (mut app, client) = app();
+            let command = Command::Wake {
+                target: DeviceId::new(1),
+                generation: 4,
+            };
+            let receipt = native(
+                &command,
+                90,
+                Some(NativeOutcome::Wake(stage)),
+                Some(DeviceId::new(1)),
+                4,
+                Some(0),
+            );
+            let task = if history {
+                app.remote_update(Update::History(receipt))
+            } else {
+                app.intents.insert(
+                    1,
+                    LocalIntent {
+                        command,
+                        operation: None,
+                        context: None,
+                    },
+                );
+                app.remote_admitted(1, Ok(receipt))
+            };
+            run(&mut app, task).await;
+            let message = app.view_model.messages().entries().back().unwrap();
+            assert_eq!(message.severity, MessageSeverity::Warning);
+            assert!(message.text.contains(packet), "{}", message.text);
+            assert!(message.text.contains(reason), "{}", message.text);
+            assert!(message.text.contains("No automatic retry"));
+            assert!(client.requests.lock().unwrap().is_empty());
+            assert!(app.intents.is_empty());
+        }
+    }
 }

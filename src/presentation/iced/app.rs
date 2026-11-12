@@ -836,15 +836,52 @@ fn settings_window_settings() -> window::Settings {
     }
 }
 
-fn wake_message(stage: WakeStage) -> &'static str {
+fn wake_message(stage: WakeStage) -> String {
+    use crate::application::wake_transport::WakeSendError;
+    use crate::control_client::model::WakeFailure;
+    let failure = |reason| match reason {
+        WakeFailure::Timeout => "The TV remote connection timed out.",
+        WakeFailure::PairingRequired => "Saved Pairing needs attention. Re-pair in Settings.",
+        WakeFailure::Connection => "The paired remote channel could not be established.",
+        WakeFailure::Local(WakeSendError::Cancelled) => "The local send was cancelled.",
+        WakeFailure::Local(WakeSendError::InvalidTarget) => {
+            "The saved TV address is not a valid local target."
+        }
+        WakeFailure::Local(WakeSendError::NoIpv4Route) => {
+            "No local IPv4 route to the TV is available."
+        }
+        WakeFailure::Local(WakeSendError::NoBroadcast) => {
+            "No usable local broadcast subnet is available."
+        }
+        WakeFailure::Local(WakeSendError::Permission) => {
+            "Local Network permission denied. Allow access in macOS Settings."
+        }
+        WakeFailure::Local(WakeSendError::SendFailed) => "The local packet send failed.",
+    };
+    match stage {
+        WakeStage::Failed(reason) => format!(
+            "{} {} No automatic retry will be made.",
+            if reason == WakeFailure::Local(WakeSendError::SendFailed) {
+                "Wake packet may have been sent."
+            } else {
+                "No Wake packet was sent."
+            },
+            failure(reason)
+        ),
+        WakeStage::FailedAfterSend(reason) => format!(
+            "Wake packet sent; delivery is unconfirmed. {} No automatic retry will be made.",
+            failure(reason)
+        ),
+        _ => wake_progress_message(stage).into(),
+    }
+}
+fn wake_progress_message(stage: WakeStage) -> &'static str {
     match stage {
         WakeStage::Ready=>"Wake packet sent; TV remote connection is ready.",
         WakeStage::Connected=>"TV remote connection is ready; no Wake packet was sent.",
         WakeStage::Cancelled=>"Wake cancelled before sending a packet.",
         WakeStage::CancelledDuringSend=>"Wake cancelled during packet send. The packet may have been sent and cannot be recalled.",
         WakeStage::CancelledAfterSend=>"Wake cancelled. A packet already sent cannot be recalled.",
-        WakeStage::FailedAfterSend(_)=>"Wake packet sent, but the TV remote connection is not ready. Check the TV and retry connecting.",
-        WakeStage::Failed(_)=>"Wake failed. Check network access and Wake configuration.",
         _=>"Wake status updated.",
     }
 }

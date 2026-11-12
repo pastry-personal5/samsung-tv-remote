@@ -1,6 +1,6 @@
 # P2-M9: GUI API Migration
 
-Status: Planned
+Status: In progress
 
 ## Goal
 
@@ -33,6 +33,17 @@ The owner decisions recorded on 2026-11-12 apply:
 - Require explicit restart for an authenticated incompatible server build.
   Opening the GUI cannot replace it or undo Stop.
 
+The [M9 plan review](milestone-09-plan-review.md) records the additional owner
+answers on 2026-11-12:
+
+- Attempt launch Connect only for an idle, disconnected saved selection after
+  authenticated restore; skip ready/busy/empty targets and never repeat after
+  reattachment. Startup races reject without retry.
+- Confirm that Stop affects every client, then keep the GUI open with Resume.
+- Write a careful [real-TV smoke runbook](milestone-09-tv-smoke.md). Running it
+  is not an M9 exit gate; the broader hardware matrix stays in M11. Signed
+  identity, Keychain and Local Network checks remain M9 requirements.
+
 ## Scope
 
 - Extend M8's typed local client to every GUI workflow, operation lookup and
@@ -56,15 +67,21 @@ credential update/restart and GUI parity evidence.
 ## Completion checklist
 
 - [ ] M8 handoff is accepted with concrete wire/client/lifecycle references;
-  M6 signed gates have evidence or an explicit remaining release blocker.
-- [ ] Every Phase 1 GUI operation uses the API, including initial explicit
-  TV Connect after restore, discovery/manual probe, Pairing/re-pair, selection,
+  M6 signed cutover gates have evidence. Any remaining signed blocker prevents
+  production cutover and M9 Done; it is not satisfied by documenting a waiver.
+- [ ] Every Phase 1 GUI operation uses the API, including eligible one-time
+  launch Connect after restore, discovery/manual probe, Pairing/re-pair, selection,
   Wake configuration, remote actions, Wake/cancel, Forget and setup recovery.
   Server attachment alone never claims TV readiness.
 - [ ] Projection and fake-client intent tests cover snapshot/event ordering,
   receipts racing events, stale selection/configuration, revision gaps,
   changed epochs, private retained lookup, unknown outcomes and late responses.
   No lost response generates a fresh-key retry or false not-admitted result.
+  Typed DTOs retain precise rejection/terminal facts and captured terminal
+  preconditions. Initial private history never starts workflow continuations.
+  One bounded client tracker/scheduler owns lookup; Iced adds no polling loop.
+  Idle-only launch Connect has an atomic owner guard and two-client race tests;
+  checking a potentially stale GUI snapshot alone cannot authorize it.
 - [ ] External selection changes invalidate stale GUI intents and setup
   confirmations without retargeting them; navigation stays local. Dirty Wake
   drafts cannot save against a different target or unseen configuration.
@@ -74,16 +91,19 @@ credential update/restart and GUI parity evidence.
   blocked states. Status and next retry remain visible while the GUI responds.
 - [ ] Stop, starting, reconnecting, incompatible build, blocked credentials,
   unsafe endpoint and disabled Local Network states are distinct. Explicit
-  Resume/restart use M8's management path; closing all GUI windows sends no Stop
+  Resume/restart use M8's management path; Stop confirms its shared impact and
+  distinguishes durability from settlement. Explicit credential recheck does
+  not regrant revocation. Closing all GUI windows sends no Stop
   or runtime drain. Opening needs no manual command, port choice or token copy.
 - [ ] Signed bootstrap authenticates the selected peer code identity before
   disclosing credentials; fake/wrong peers and replay fail. Same-executable
   identity limits are documented. No bearer is placed in files, logs, command
   arguments or environment.
 - [ ] A signed bundle built from committed configuration passes empty first
-  launch with populated legacy fixtures, first Pairing, new-profile restore,
-  GUI close/reopen, Wake and Local Network review. Fresh TV/API credentials
-  pass save/read/update/delete, server restart and signed rebuild/update.
+  launch with populated legacy fixtures, fixture-backed first Pairing/Wake,
+  new-profile restore, GUI close/reopen and controlled-LAN Local Network review.
+  Real-TV smoke execution is supplementary, not an exit gate. Fresh TV/API
+  credentials pass save/read/update/delete, server restart and signed rebuild/update.
   Routine access produces zero Keychain prompts; denied, locked and
   interaction-required states stay visible without unattended prompt loops.
 - [ ] Every migrated flow has deterministic API/fake-client evidence, and
@@ -104,15 +124,21 @@ credential update/restart and GUI parity evidence.
 ## Delivery order
 
 Follow the [architecture sequence](milestone-09-architecture.md#implementation-sequence):
-freeze the M8 handoff; build projection/request tracking; migrate control and
-setup flows in isolated builds; finish lifecycle UI; verify signed composition;
-then cut over and review. M9 stays Planned until implementation starts; this
-record claims no Cargo, signed-platform or TV result.
+freeze the M8 handoff and prove signed feasibility; build projection/request
+tracking; migrate control and setup flows in isolated builds; finish lifecycle
+UI; verify signed composition;
+then cut over and review. The [implementation ledger](milestone-09-implementation.md)
+records the parity inventory, namespace manifest and feasibility work. The
+production cutover and completion checklist remain open.
 
 ## References
 
 - [Architecture](milestone-09-architecture.md)
+- [Implementation ledger](milestone-09-implementation.md)
+- [Code review and fixes](milestone-09-code-review.md)
 - [M8 handoff](milestone-08-architecture.md)
 - [M6 acceptance and test ownership](milestone-06-acceptance.md)
 - [Target architecture](target-architecture.md)
 - [Lifecycle and security research](server-lifecycle-security.md)
+- [Plan review and owner answers](milestone-09-plan-review.md)
+- [Optional real-TV smoke runbook](milestone-09-tv-smoke.md)

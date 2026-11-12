@@ -2,6 +2,100 @@
 
 Status: Active
 
+- 2026-11-12 — Re-reviewed P2-M10 against modern MCP/client documentation and
+  the current M8/M9 boundaries. Made required metadata/result framing and
+  protocol errors explicit; classified POST reads into shared query capacity
+  with bounded waiters. Disabled replay-inducing mutation annotations,
+  clarified shared MCP identity and detail paths, and assigned persistent
+  Disconnect/regrant work. Acceptance now covers all nine corpus scenarios
+  plus all-tool/recovery parity. See the expanded
+  [plan review](milestone-10-plan-review.md). M10 remains Planned; production
+  helper, installed client and token measurements remain unverified.
+
+- 2026-11-12 — Consolidated GUI intents into one bounded context container
+  (`5ee2a9f`), added a fixed-account signed credential probe (`8964d54`) and
+  aligned bundle version metadata (`d1d77db`). Required checks passed with
+  323 tests. Native update acceptance found a real blocker: the local
+  self-signed rebuild could not read earlier Keychain items, while an Apple
+  Development changed build passed disposable cross-build read/update/delete
+  in both fresh service scopes with UI disabled. All disposable items were
+  cleaned up, and the original live owner was restored without changing role
+  values, namespace or configured signer. Commit `0a396a6` adds a standalone
+  access-handoff tool; its signed inspection passed without Keychain calls.
+  The owner has been asked to approve the native access step. No live signer switch or
+  Keychain approval has occurred; M9 remains in progress.
+
+- 2026-11-12 — Committed the client-only GUI cutover as `ec3d84d`. Removed
+  `InProcess`, direct runtime observation/admission/completion, GUI operation
+  polling and runtime drain on close. Production launch uses signed peers,
+  fixed fresh storage and server-only TV/Keychain adapters. Added API presence
+  markers and initial-enrollment revocation tombstones, plus a mandatory GUI
+  boundary check. Committed checks pass with 317 tests. The rebuilt signed
+  bundle starts an empty production server despite a populated legacy profile;
+  legacy hashes remain unchanged. Signed CLI Stop/Resume and native wrong-peer
+  rejection pass. Production CUA window inspection remains unverified, and
+  credential CRUD/rebuild, blocked stores, fixture Pairing/Wake and controlled
+  Local Network gates still prevent M9 completion.
+
+- 2026-11-12 — Added the isolated API GUI's shared-impact Stop confirmation,
+  durable/marker/settlement results, explicit Resume/restart/recheck and fresh
+  authenticated-state barrier. Exit detaches and ignores late callbacks;
+  recheck does not start, rotate credentials or regrant revocation. Prepared
+  the fresh production profile, server-only pairing adapter and explicit
+  namespace handling for private storage, endpoint, Stop and bootstrap paths.
+  Required Cargo checks pass with 313 tests, including 12 process cases.
+  Shipping composition and signed native cutover gates remain open.
+
+- 2026-11-12 — Migrated the isolated API GUI's setup/configuration and control
+  continuations to captured local intent context. Select → save Wake settings
+  → Connect requires matching terminal preconditions and an atomic snapshot;
+  same-device generations and unseen config revisions cannot retarget a draft.
+  Newer edits survive a pending save, conflicts retain edits with explicit
+  discard/reload, and expired or superseded probes cannot authorize Pairing.
+  Added one eligible idle-only launch Connect, precise typed outcome messages
+  and recovery transaction tests. Required checks pass with 302 tests. The
+  default GUI remains on its legacy composition pending lifecycle UI,
+  production composition and signed native cutover acceptance.
+
+- 2026-11-12 — Continued P2-M9 with one bounded native request/history tracker
+  and four-concurrent read-only lookup scheduler. Atomic private history and
+  shared references recover without mutation replay or GUI continuations;
+  ticket fences and versioned delivery acknowledgments preserve known facts
+  across late replies and cancelled callbacks. Removed the probe's separate
+  Iced lookup path. Added an injectable typed client port and real Iced-task
+  fake-client tests, including management mutation guards and detach on close.
+  Required checks pass with 291 tests. Full workflow migration, production
+  composition, signed native acceptance and final cutover remain open.
+
+- 2026-11-12 — Started P2-M9 implementation. Added kernel-audit-token signed
+  peer verification, a separate noninteractive fresh-credential adapter and
+  disposable signed feasibility probes. Recorded the pre-cutover GUI parity
+  inventory and namespace manifest. Added optional idle-only Connect admission
+  so an automatic client cannot replace another client's ready/busy workflow.
+  Replaced raw client receipt JSON with typed outcomes, rejection codes and
+  captured terminal preconditions, rejecting contradictory or unknown facts.
+  Required Cargo checks pass (275 tests); disposable signed peer and credential
+  feasibility passes. These results do not prove final bundle cutover acceptance.
+  Production composition and GUI cutover remain gated; see the
+  [implementation ledger](milestone-09-implementation.md) for evidence and
+  remaining work.
+
+- 2026-11-12 — Reviewed P2-M9 against the completed M8 handoff and actual GUI
+  probe. Corrected stale baseline assumptions; specified typed client ports,
+  private history/lookup, one request tracker, workflow continuation guards,
+  early signed feasibility and disjoint credential namespaces. Owner selected
+  idle/disconnected-only launch Connect and confirmation before shared Stop.
+  Added a careful real-TV smoke runbook whose execution is not an M9 exit
+  gate; signed macOS gates remain required. The
+  [plan review](milestone-09-plan-review.md) records findings and answers.
+  M9 remains Planned; no implementation or platform result is claimed.
+
+- 2026-11-12 — Reviewed and tightened the M10 plan against M8 code: shared
+  ingress limits, private bounded lookup waits, lost-receipt recovery, helper
+  deadlines, 15-tool consistency and configuration verification/repair.
+  [Plan review](milestone-10-plan-review.md) records findings and remaining
+  freeze decisions; implementation and signed-client acceptance stay Planned.
+
 - 2026-11-12 — Follow-up M8 code review fixed cancelled submissions losing
   lookup recovery, SSE idle deadlines resetting on read cancellation, slow
   lookups blocking event consumption and transient subscription failures

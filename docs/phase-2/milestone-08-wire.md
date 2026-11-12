@@ -65,7 +65,8 @@ field is accepted. Route-specific fields are:
 | probes | `host`, optional `candidate_id`; owner validates host/handle binding |
 | pairings | Equal `attempt_id`/`observation_id`, `host`, equal full lowercase `fingerprint`/`confirm_fingerprint`, `label`, `selection_generation`, optional saved `device_id` and `recovery_transaction_id` |
 | selection | `device_id`, `expected_generation` |
-| connections / wakes | `device_id`, `selection_generation` |
+| connections | `device_id`, `selection_generation`, optional boolean `only_if_idle` (defaults false) |
+| wakes | `device_id`, `selection_generation` |
 | remote-actions | `device_id`, `selection_generation`, semantic `action` |
 | devices/{id}/wake | Matching `device_id`, `selection_generation`, `expected_config_revision`, optional `wired_mac`, `wifi_mac`, `active_interface` (`Wired` or `WiFi`) |
 | wakes/{id}/cancel | `device_id`, `selection_generation`; path is the named operation |

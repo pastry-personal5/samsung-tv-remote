@@ -41,6 +41,15 @@ JSON-RPC body and reject mismatches as specified. Return JSON-RPC JSON or
 request-scoped SSE as allowed by the selected revision; no shell command or
 stdio process stands in for the HTTP endpoint.
 
+Validate `params._meta` fields `io.modelcontextprotocol/protocolVersion` and
+`io.modelcontextprotocol/clientCapabilities` on every request, including a
+first `tools/call` with no prior discovery.
+Client name/version is optional display data, never authenticated identity.
+Successful MCP results carry `resultType: "complete"`; that completes the RPC,
+not necessarily the admitted TV operation. Keep the service outcome in a
+separate typed field. See the revision's [base
+protocol](https://modelcontextprotocol.io/specification/2026-07-28/basic/index).
+
 Use short JSON tool responses for mutating calls: admit the operation and
 return its ID. A separate lookup tool obtains later status. This avoids
 coupling a long-running TV effect to an MCP SSE response whose close means
@@ -65,9 +74,13 @@ relevant safety rule beside each sensitive argument. Advertise truthful
 read-only/destructive annotations, with server authorization and confirmation
 checks unchanged. In the 2026 revision, serve `tools/list` in deterministic
 order with private caching hints suited to a stable catalog; TV state changes
-do not change the tool list. Older negotiated revisions follow their own
-list/cache rules. Verify Claude Code both with deferred tool search and with
-all definitions loaded upfront.
+do not change the tool list. Freeze nonnegative `ttlMs` and
+`cacheScope: "private"` for discovery/catalog results under the revision's
+[cache rules](https://modelcontextprotocol.io/specification/2026-07-28/server/utilities/caching).
+Credential changes invalidate that authorization context's cache even though
+operation ownership retains its stable identity. TV reads and mutation
+results do not inherit catalog caching. Verify Claude Code both with deferred
+tool search and with all definitions loaded upfront.
 
 Make read results summary-first and bounded, with a separate inspect path
 for detail; discovery candidates use opaque IDs and reveal only data needed
@@ -118,6 +131,14 @@ second policy path or read pairing credentials. The helper uses protected
 bootstrap and obtains only a client credential. GUI mode remains free of
 production TV/storage adapters after M9.
 
+Extract shared typed decoders/validation from M8's route DTOs where necessary;
+do not duplicate confirmation rules in MCP or serialize calls through `/v1`.
+Reject duplicate JSON members before a generic JSON map can discard them.
+Keep the shared wire fixture tests and GUI dependency check effective after
+moving code. Protocol tests may use a narrow injected service port or a real
+service with fake effect ports; the concrete façade is not already a mockable
+transport trait.
+
 ## Protocol fixtures and resource limits
 
 Implement `server/discover`, `tools/list` and `tools/call`; advertise only
@@ -130,18 +151,80 @@ Before coding, freeze a fixture table of exact HTTP status, JSON-RPC code and
 response-ID behavior from the selected transport,
 [versioning](https://modelcontextprotocol.io/specification/2026-07-28/basic/versioning)
 and [tools](https://modelcontextprotocol.io/specification/2026-07-28/server/tools)
-specifications. Cover methods/media types, malformed JSON, batch bodies,
-invalid envelopes/IDs, unknown methods/tools, invalid arguments and unsupported
-versions. Include missing, conflicting and encoded metadata headers. Accepted
-notifications have no response body. Distinguish protocol errors from tool
-execution failures; a transport error cannot establish that an effect was
-not sent.
+specifications. Seed it with these normative cases; complete the remaining
+parse/framing/media-type cases before accepting slice 1:
+
+| Case (otherwise valid authenticated request) | Required response |
+| --- | --- |
+| Required MCP header missing, malformed or different from its body field | HTTP 400, `-32020` (`HeaderMismatch`). |
+| Matching header/body version is unsupported | HTTP 400, `-32022`, supported revision list. |
+| Required body `_meta` field is missing | HTTP 400, `-32602`; header validation may also fail. |
+| Unknown RPC method | HTTP 404, `-32601`; distinguish an unknown tool (`-32602`). |
+| GET or DELETE `/mcp` | HTTP 405; no legacy session or stream. |
+
+For overlapping errors freeze validation order and response ID behavior;
+do not reuse `/v1`'s application error body as JSON-RPC. Cover valid string
+and numeric IDs, malformed JSON, batch/response bodies, duplicate envelope
+members, encoded header values and both required Accept media types. No
+client notifications are supported in this core revision: reject notification
+POSTs without admission, especially a `tools/call` missing its ID. If a future
+notification is accepted, return 202 with no body. Do not require legacy
+`ping`, `initialize` or `notifications/initialized` success.
+
+Separate malformed RPC/tool envelopes from typed tool validation and service
+failures. The latter return a complete tool result with `isError: true`, stable
+application code and recovery guidance. Retained failures include their
+operation reference; pre-admission failures must not invent one. Output
+schemas cover success, pending, rejected and unknown variants. A transport
+error cannot establish that an effect was not sent.
 
 Host/Origin and authentication checks precede protocol dispatch; authorization
 is rechecked at admission. Reuse M8 connection/body/time limits. Explicitly
 budget JSON-RPC envelope overhead and reserve capacity for read-only recovery.
 Bound concurrent lookup waiters so they cannot occupy all request slots.
 Reject oversized, duplicate and unknown argument fields without admission.
+
+### Shared transport integration gate
+
+M8 currently owns routing, authentication and request reservations in
+`src/server/control_http/transport.rs`; `HttpAdapter` holds concrete service
+handles for two principals. Extract the minimum shared ingress/access and
+reservation boundary before mounting `/mcp`. Both routes must consume the
+same connection and request pools; adding a second set would multiply M8's
+accepted limits. Preserve `/v1` response semantics and SSE behavior with
+regression tests. JSON-RPC request IDs are response correlation only; they
+never replace the application operation key or authenticated principal.
+
+M8 currently classifies query reservations by HTTP GET. MCP uses POST for
+reads too: classify a validated RPC/tool by its catalog semantics before
+dispatch, never by unverified `Mcp-Method`/`Mcp-Name` alone. Bounded parsing
+also needs an ingress reservation. Preserve the existing 128-connection and
+64-request aggregate ceilings (52 ordinary, eight query, four management;
+per identity ten/four/two). MCP gets no management tools. Long lookup waits
+may hold at most four global/two per-identity query reservations, leaving
+immediate reads available; these are subsets of the existing query pools.
+Hold reservations through final response flush/drop. Test mixed `/v1` and
+`/mcp` saturation, stalled request/response bodies and false read headers on
+mutations, including when the owner registry is full.
+
+M8's `ControlService::lookup` and `operation` are immediate queries, not
+long-poll APIs. Implement optional waiting above that boundary using an atomic
+subscription followed by private lookup/recheck, a monotonic deadline and
+bounded waiter reservations. A revision gap requires fresh private lookup;
+events are wake-up hints, not authority for exposing another client's result.
+Recheck after attaching, on wake-up and once at the deadline so a terminal
+transition cannot be lost between subscription and lookup. Unrelated events
+cannot reset that deadline. Waiting consumes existing owner subscriber
+capacity as well as the query reservation; release both on disconnect,
+revocation, Stop and timeout, and report saturation without a busy retry loop.
+Cap the effective wait by the remaining end-to-end HTTP deadline, allowing
+time to encode and flush the result; body parsing must not create a fresh
+ten-second budget after the enclosing request deadline is nearly exhausted.
+Do not hold the service owner while waiting or repeatedly submit lookups in
+a tight loop. Freeze concrete page/string limits and saturation
+responses in slice 1. Keep immediate lookup capacity available when waiters
+are full. Pagination/detail is an MCP projection over bounded service data;
+any cursor must bind query, principal and epoch and detect stale pages.
 
 ## Catalog and schema freeze
 
@@ -156,10 +239,21 @@ Only list, inspect and lookup are read-only. Probe/discovery can open network
 connections. Forget is destructive; evaluate other annotations from their
 service effects rather than their names.
 
+Set `readOnlyHint: true` only on `list_tvs`, `inspect_tv` and `get_operation`.
+Set both `readOnlyHint: false` and `idempotentHint: false` on every mutation:
+retained-key deduplication is time-bounded and does not make arbitrary replay
+safe. Claude Code can replay interrupted calls based on either annotation;
+verify that mutations are not replayed after connection loss in the target
+client. Test the separate one-time authentication refresh below. Keep schemas
+as root objects with strict typed arguments, self-contained JSON Schema
+2020-12 and no network `$ref` resolution or custom `x-mcp-header` parameters.
+Protocol `_meta` remains outside tool arguments; bounded unknown extension
+metadata must not become a blanket unknown-argument rejection.
+
 | Tool | Shared service behavior and guards |
 | --- | --- |
 | `list_tvs` | Saved-TV summary, selected target, current epoch/generation; no TV network access. |
-| `inspect_tv` | One target's configuration, readiness and recovery facts; no physical-state inference. |
+| `inspect_tv` | One saved target's full configuration, config revision, readiness and recovery facts; no physical-state inference. |
 | `discover_tvs` | Bounded discovery with client-bound expiring candidates. |
 | `probe_tv` | Validated host with optional bound candidate handle; fresh certificate observation. |
 | `pair_tv` | First Pair/re-pair with observed target, full matching pin, generation and explicit recovery variant where applicable. |
@@ -169,7 +263,7 @@ service effects rather than their names.
 | `remote_action` | One finite semantic action under selected target/generation. |
 | `wake_tv` | One captured-config Wake operation under selected target/generation. |
 | `cancel_wake` | Named owned Wake operation; cannot recall a packet already sent. |
-| `get_operation` | Private lookup by exactly one ID or original key, epoch and optional wait of 0–10 seconds. |
+| `get_operation` | Private lookup by exactly one ID or original key, epoch, optional wait of 0–10 seconds and bounded result detail/page controls. |
 | `forget_tv` | Ordinary removal with exact target confirmation and config revision. |
 | `recover_pairing` | Exact target/transaction/confirmation; compensates interrupted first Pair only. |
 | `recover_forget` | Exact target/transaction/confirmation; retries only the marker's remaining cleanup. |
@@ -179,6 +273,22 @@ epoch and a UUID key allocated once per intent. Reuse stable authenticated
 identity across credential refresh and private lookup. Full client capabilities
 must reach every supported setup/recovery action without gaining lifecycle
 management permission.
+
+M8 provisions exactly two role identities: GUI and MCP. All Claude Code
+sessions using this user entry share the MCP identity, quotas and private
+operation/observation namespace. Privacy is between authenticated principals,
+not between conversations. Never derive another identity from client metadata,
+JSON-RPC IDs or a new HTTP connection. Test two simultaneous Claude sessions
+with distinct operation keys and selection races; finer session isolation
+would require a separately reviewed bootstrap/authorization change.
+
+Keep detail reachable within this catalog: `inspect_tv` supplies saved-target
+detail and `get_operation` supplies full discovery/probe/cleanup facts and
+remaining result pages. Freeze those arguments and cursors alongside summary
+schemas. A discovery receipt's operation ID is the lookup anchor; pagination
+must not rerun discovery/probe or extend candidate/observation expiry. Never
+truncate a host, scoped ID, fingerprint or confirmation value that a later
+call must echo. Label previews may be shortened with explicit truncation.
 
 The corpus remains a proposed MCP projection, not an installed adapter. M8's
 schema reconciliation is now executable in `tests/control_documentation.rs`:
@@ -202,6 +312,14 @@ Keep fixtures, examples and corpus synchronized with the codecs. The current
 actual model-visible counts and optimize without removing guards or increasing
 calls. M8's freeze does not constitute MCP/Claude acceptance.
 
+Deliver a slice-1 freeze record linking each tool to its exact command/query,
+input decoder, result variants, confirmation/precondition checks and test
+owner. Include admitted policy failures, pending observations, empty startup,
+re-pair recovery, first-Pair compensation and Forget cleanup. Record all
+remaining numeric projection/metadata limits, cache TTLs, pool/waiter mapping,
+timing and installed compatibility results there; unresolved cells block the
+corresponding implementation slice rather than silently becoming defaults.
+
 ## Operation lifetime and recovery
 
 Same key/same request resolves the retained operation; changed arguments
@@ -209,15 +327,23 @@ conflict. Preserve known-duplicate behavior at capacity. Revocation before
 admission prevents effects even if validation previously succeeded. A refreshed
 bearer cannot turn an old key into a new operation.
 
-Discover/probe may wait within their existing supervised deadlines for a
-bounded observation; otherwise return a receipt. Lookup waits at most ten
-seconds with bounded waiter capacity. Disconnect/cancellation releases only
+All mutations return an operation receipt by default. Discover/probe may
+include an already available terminal observation or use a bounded read-only
+wait after admission; do not delay the receipt to the full discovery deadline.
+Freeze that fast-path deadline within the HTTP request budget and measure both
+immediate and slow paths. Receipt output must retain epoch, original key,
+operation ID, nullable target, generation where applicable, status and terminal
+expiry when known, so recovery needs no guessed identifier. Lookup waits at
+most ten seconds with bounded waiter capacity. Disconnect/cancellation releases only
 the waiter. An admitted effect belongs to the service even if its response
 is lost; only explicit `cancel_wake` changes the permitted Wake wait path.
 
 Never automatically resubmit after a lost response, cancellation, restart or
 unknown outcome. Query the original key within retention. Changed epoch or
 expired retention remains unknown; a new key requires a new explicit intent.
+A missing lookup is not proof of non-admission: distinguish retained terminal
+failure, pending, expired/missing and changed-epoch outcomes. A lost receipt
+is recovered by original key; never require its missing operation ID.
 Retained policy failures include their operation reference even when reported
 as tool failures. Untrusted labels and TV metadata remain data, not instructions.
 
@@ -251,10 +377,49 @@ an active Claude session. Explicit reconfiguration requires reconnection.
 Helper stdout is only header JSON; errors use nonzero exit and sanitized
 stderr. No bearer is stored in files, arguments, environment or logs. Validate
 context against trusted installation/bootstrap state, not caller URL/name or
-working directory. Avoid shell lookup of an untrusted executable. Use finite
-attach/launch timeouts with no unattended credential-prompt loop. Exercise
+working directory. Avoid shell lookup of an untrusted executable. The documented
+helper timeout is ten seconds. Use a shorter end-to-end
+monotonic deadline covering bootstrap, launch and readiness, with no unattended
+credential-prompt loop. Concurrent helpers must converge on the same launch
+and stable MCP identity. A timeout must not clear Stop, kill a valid server or
+mint a replacement identity. Test cold start near the deadline and helper
+termination while detached startup continues. Exercise
 Claude Code's one-time 401/403 refresh before admission, then resolve using
 the same identity/key.
+
+Routine helper calls reuse the current MCP credential; they do not rotate it
+on every connection and invalidate other active clients. Bootstrap uses the
+MCP role explicitly (existing start/status CLI modes use the GUI role).
+Keep detached-child stdout/stderr separate from helper output, build the
+single header object only after readiness verification, and return no partial
+header on failure. Test output as a strict single JSON object, including
+failure/timeout cases. In the client refresh test, compare the retried typed
+arguments, epoch and key and assert one service admission. Post-admission
+revocation or reply loss remains a recovery case, never evidence of no effect.
+
+Distinguish configuration saved from endpoint verified in the GUI. Installation
+success alone proves neither CLI revision compatibility nor readiness. Freeze
+an isolated discovery/header-helper compatibility check in slice 1 before
+building the connection action. Record the CLI version and runtime actually
+used; unsupported revision/helper behavior blocks installed acceptance rather
+than triggering an implicit older-protocol fallback.
+
+Define opt-in disconnect as removal of only this app's unchanged user entry
+and revocation of its MCP credential through the authorized management path.
+It must preserve unrelated settings and leave the GUI/server usable. If the
+entry changed concurrently, show a conflict instead of deleting it. Cover
+installed app relocation/update, missing helper and reconnection after explicit
+repair; never fall back to an executable found through the caller's PATH.
+
+M8 has in-memory revocation/tombstones but no public disconnect/regrant API.
+Specify the authenticated GUI-management path and restart-persistent revocation
+before implementing Disconnect. Neither bootstrap, recheck nor headersHelper
+may restore revoked access; re-enrollment requires an explicit Connect action.
+Track entry removal and credential revocation separately if either fails,
+with safe retry guidance. Configuration writes need concurrency protection
+that the selected writer actually honors: atomic rename alone prevents a torn
+file, not a lost concurrent update. If the CLI offers no such protection,
+freeze an explicit conflict/repair strategy before reporting installation safe.
 
 Test GUI-spawned and Claude-spawned launches for macOS Local Network
 responsible-code attribution and denial/recovery. Fake TVs prove protocol
@@ -266,11 +431,11 @@ evidence format.
 
 | Slice | Reviewable deliverable | Required evidence |
 | --- | --- | --- |
-| 1. Handoff/schema freeze | Accepted shared interfaces, catalog mappings and limits | Fixtures for every tool/recovery route and explicit predecessor blockers. |
+| 1. Handoff/schema freeze | Accepted shared interfaces, catalog mappings and limits | Per-tool freeze record, normative protocol matrix, isolated CLI/runtime/helper compatibility and explicit predecessor blockers. |
 | 2. Protocol/catalog/reads | Routing, discovery, deterministic schemas, list/inspect/lookup | Proposed `tests/mcp_protocol.rs` and `tests/mcp_catalog.rs`: framing/version/status matrix, private cache and schema/result conformance. |
 | 3. Mutations/outcomes | Typed adapter and compact results | Proposed `tests/mcp_tools.rs`: all-tool fake-service parity and fake-TV one-write/packet, stale selection, expiry and partial-cleanup evidence. |
-| 4. Connection/helper | Signed helper composition and opt-in GUI action | Proposed `tests/mcp_connection.rs`: isolated config preservation/conflicts/quoting, Stop, absent server, hostile peer, crash, rotation and retry. |
-| 5. Installed acceptance | Signed client connection, corpus report and review | GUI closed/server absent: discover/list, read and mutation through fake TV; seven workflows in both search modes, plus signed Local Network review. |
+| 4. Connection/helper | Signed helper composition and opt-in GUI Connect/Disconnect | Proposed `tests/mcp_connection.rs`: isolated config preservation/conflicts/quoting, removal/regrant, Stop, absent server, hostile peer, crash, rotation and retry. |
+| 5. Installed acceptance | Signed client connection, corpus report and review | GUI closed/server absent: discover/list, read and mutation through fake TV; all nine current corpus scenarios in both search modes, plus signed Local Network review. |
 
 Cross-client tests race GUI selection against MCP admission, edit Wake config
 after admission, cancel/disconnect lookup while an effect runs, and rotate or
@@ -279,6 +444,16 @@ arguments, duplicates at capacity, cross-principal lookup, restart/expiry
 unknowns and stale cached catalogs after Stop/build change. Use deterministic
 fake ports/clocks and isolated subprocesses; automated tests require no TV or
 local network.
+
+The corpus measures routine use, not full tool coverage. Add explicit parity
+cases for all 15 tools and every recovery variant, including same-ID Select
+followed by Connect, manual Probe, re-pair after certificate change, Wake
+configuration, cancellation before/after packet send and failed cleanup.
+For installed evidence record the signed executable, profile and composition,
+which effect ports are fake and which bootstrap/credential paths are real.
+Development-mode trust cannot stand in for production helper verification.
+Do not alter the live Claude configuration or owner profile for an automated
+test; model/client runs need an isolated test entry and sanitized fixtures.
 
 Re-run the [M6 corpus proxy](milestone-06-mcp-budget.md) after schema changes.
 Actual client gates remain: catalog/instruction ≤1,900 tokens, ordinary receipt

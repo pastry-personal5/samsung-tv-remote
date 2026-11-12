@@ -20,6 +20,10 @@ Current references:
   [Plan review](phase-2/milestone-08-plan-review.md) records findings and owner answers.
 - [P2-M9 implementation plan](phase-2/milestone-09-overview.md) — complete GUI
   API migration, outcome recovery, signed fresh-profile cutover and verification.
+  [Plan review](phase-2/milestone-09-plan-review.md) records corrections and
+  owner answers; the [implementation ledger](phase-2/milestone-09-implementation.md)
+  records current progress. The [optional TV smoke runbook](phase-2/milestone-09-tv-smoke.md)
+  is supplementary evidence, not an M9 exit gate.
 - [P2-M6 human test runbook](phase-2/milestone-06-human-runbook.md) — commands
   for the isolated macOS account and remaining platform checks.
 - [Control API Server internals](phase-2/control-server-internals.md) — planned

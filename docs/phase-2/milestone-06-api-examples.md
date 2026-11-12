@@ -20,6 +20,7 @@ UTC millisecond expiries are **decimal JSON strings**, including `"0"`.
 | Re-pair | Same route plus `device_id:A`, current generation | Same saved ID only after fresh observation, exact fingerprint and TV approval. Interrupted re-pair also requires `recovery_transaction_id:T`. |
 | Select | `POST /v1/selection {device_id:A,expected_generation:"7"}` | `saved`; durable selection increments generation. A stale new intent has a retained terminal rejection. |
 | Connect | `POST /v1/connections {device_id:A,selection_generation:"7"}` | `remote_ready` means observed session readiness; no power claim. |
+| Launch Connect | `POST /v1/connections {device_id:A,selection_generation:"7",only_if_idle:true}` | Owner checks disconnected/idle state atomically; a ready or competing operation yields retained `busy`. The GUI does not retry the launch intent. |
 | Wake configuration | `PUT /v1/devices/A/wake {device_id:A,selection_generation:"7",expected_config_revision:"3",wired_mac:"02:00:00:00:00:01",wifi_mac:null,active_interface:"Wired"}` | `saved` with stable terminal selection/configuration facts; no packet. |
 | Remote action | `POST /v1/remote-actions {device_id:A,selection_generation:"7",action:"VolumeUp"}` | `written`, `not_sent` or `uncertain`. PlayPause resolves at dispatch. PowerToggle probes before Wake if disconnected. |
 | Wake | `POST /v1/wakes {device_id:A,selection_generation:"7"}` | `wake` contains separate packet and remote-readiness facts. Finding a reachable TV uses `connected`/`packet:not_sent`; `ready` follows a sent packet. |

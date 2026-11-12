@@ -26,7 +26,7 @@ the background server's `/mcp` Streamable HTTP endpoint.
 
 Planning uses M6's contract, the completed M7 runtime and
 [M8's accepted isolated API/client/lifecycle handoff](milestone-08-review.md).
-M9's signed production cutover remains Planned; M8 fake-process evidence does
+M9's signed production cutover remains unaccepted; M8 fake-process evidence does
 not accept an installed MCP server. M10 remains Planned.
 
 Reuse M8's frozen command/query boundary, ID/counter codecs, stable identity,
@@ -44,8 +44,9 @@ a server. No client configuration changes are part of planning.
 
 ## Delivery order
 
-1. Freeze predecessor contracts and reconcile the 13-tool catalog, recovery
-   variants and lookup behavior with the shared service/wire fields.
+1. Freeze predecessor contracts, the protocol status/metadata matrix, shared
+   pool allocation and the proposed 15-tool schemas/service mappings. Verify
+   the isolated target CLI/runtime and header-helper compatibility early.
 2. Implement authenticated revision discovery, JSON-RPC framing, deterministic
    catalog/schema and read-only tools against fake ports.
 3. Add typed mutations and compact outcomes; prove confirmation, deduplication,
@@ -64,7 +65,12 @@ service, login registration or Claude Desktop integration is included.
 - [ ] `/mcp` accepts the selected revision's Streamable HTTP requests and
   rejects invalid method, headers/body metadata mismatch, unsupported
   version, Origin, authentication, or tool input with protocol-correct errors.
-  There is no stdio or CLI MCP server path.
+  Required per-request metadata, result discriminators and direct first-call
+  operation without discovery are covered. There is no stdio MCP server path.
+- [ ] HTTP and MCP share the existing connection/request/subscriber limits.
+  POST reads use reserved query capacity; bounded lookup waits leave immediate
+  recovery capacity available. Mixed-client saturation and disconnect tests
+  prove reservations are released and no mutation bypasses admission.
 - [ ] Every supported TV operation reaches the same application service used
   by `/v1`; no tool opens a TV socket or bypasses selection, Pairing, or the
   bounded dispatcher.
@@ -81,11 +87,15 @@ service, login registration or Claude Desktop integration is included.
   hatch. Tool definitions are concise, searchable, deterministic, and
   independent of current TV connection/selection state. Read-only and
   destructive annotations are accurate but never used as authorization.
+  Mutations explicitly disable read-only/idempotent hints; installed-client
+  disconnect tests prove annotations do not induce mutation replay.
 - [ ] Default list/discovery results are bounded summaries with a detail
   path; receipts and errors omit full snapshots and raw protocol dumps while
   retaining target, freshness, confirmation, and uncertainty facts. Operation
   lookup avoids unnecessary repeat polling where a bounded wait is supported,
   and cancelling lookup cannot cancel a TV effect.
+  Saved-target and operation-result detail/pages are reachable through the
+  frozen catalog, preserving complete guards, recovery markers and expiry.
 - [ ] The negotiated MCP revision's cache and structured-result rules are
   tested. Compare terse text with structured-plus-compatible-text results in
   the actual client; do not assume structured output or HTTP compression
@@ -102,12 +112,27 @@ service, login registration or Claude Desktop integration is included.
   no pairing token. GUI-spawned and Claude-spawned server launches are checked
   for the correct macOS Local Network responsible code. Authorization
   failures are rejected before effects, including Claude Code's one-time
-  retry after header refresh.
+  retry after header refresh. Concurrent helpers reuse the current credential
+  and MCP identity. Multiple Claude sessions share that identity's quotas and
+  private lookup scope; conversation isolation is not claimed.
+- [ ] Connect reports configuration saved and endpoint verified separately.
+  Disconnect removes only the unchanged app entry and revokes MCP access;
+  restart/recheck/helper execution cannot silently restore it. Partial
+  installation/removal, writer conflicts and app relocation have tested repair
+  paths. GUI control stays usable.
 - [ ] Protocol tests and a Claude Code smoke test cover `tools/list`, one
   read tool, and one mutating tool against a fake TV through the installed
   server and documented HTTP configuration, with the GUI closed and the
-  server initially absent. The sanitized M6 workflow corpus then exercises
-  tool discovery, compact results, and call counts in that actual client.
+  server initially absent. All nine current M6 corpus scenarios run in both
+  tool-search modes, with additional all-tool/re-pair/cleanup parity tests.
+  Evidence names the actual signed executable/profile/composition; fake
+  development mode cannot satisfy production-helper or OS permission gates.
+
+## Plan review
+
+The [2026-11-12 plan review](milestone-10-plan-review.md) records corrected
+contracts and implementation gates. This is documentation review only; it
+does not accept protocol, signed-client or token-budget evidence.
 
 ## References
 

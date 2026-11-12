@@ -41,7 +41,7 @@ macOS permissions, and unavoidable first-use consent.
 | P2-M6 | Architecture and contract | Process boundary, API and MCP contracts, baseline and migration map. | Active | [Overview](milestone-06-overview.md) · [Architecture](milestone-06-architecture.md) |
 | P2-M7 | Headless control runtime | TV workflow and effects run independently of Iced. | Done | [Overview](milestone-07-overview.md) · [Architecture](milestone-07-architecture.md) |
 | P2-M8 | Control HTTP server | Same-executable on-demand server, complete authenticated API/events, fresh isolated profile and early GUI probe. | Done | [Overview](milestone-08-overview.md) · [Architecture](milestone-08-architecture.md) · [Review](milestone-08-review.md) |
-| P2-M9 | GUI API migration | Complete typed GUI client, outcome recovery and signed fresh-profile cutover. | Planned | [Overview](milestone-09-overview.md) · [Architecture](milestone-09-architecture.md) |
+| P2-M9 | GUI API migration | Complete typed GUI client, outcome recovery and signed fresh-profile cutover. | In progress | [Overview](milestone-09-overview.md) · [Architecture](milestone-09-architecture.md) |
 | P2-M10 | Streamable HTTP MCP | Full supported setup and control operations through `/mcp`. | Planned | [Overview](milestone-10-overview.md) · [Architecture](milestone-10-architecture.md) |
 | P2-M11 | Integration and refactor completion | Cross-client, restart, packaging, security, accessibility, and hardware review; remove legacy control path. | Planned | [Overview](milestone-11-overview.md) · [Architecture](milestone-11-architecture.md) |
 

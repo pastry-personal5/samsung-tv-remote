@@ -648,7 +648,7 @@ fn power_view(
         WakeStage::Failed(WakeFailure::Local(crate::application::wake_transport::WakeSendError::NoIpv4Route)) => "No local IPv4 route to this TV. Check the Mac's network connection.",
         WakeStage::Failed(WakeFailure::Local(crate::application::wake_transport::WakeSendError::NoBroadcast)) => "TV is not on a usable local broadcast subnet. Check the saved TV address and network.",
         WakeStage::Failed(WakeFailure::Local(crate::application::wake_transport::WakeSendError::Permission)) => "Local Network permission denied. Allow this app access in macOS Settings, then try again.",
-        WakeStage::Failed(WakeFailure::Local(crate::application::wake_transport::WakeSendError::SendFailed)) => "Magic packet could not be sent. Check the local network and try again.",
+        WakeStage::Failed(WakeFailure::Local(crate::application::wake_transport::WakeSendError::SendFailed)) => "Magic packet may have been sent. Delivery is unknown; no automatic retry will be made.",
         WakeStage::Failed(WakeFailure::Local(crate::application::wake_transport::WakeSendError::Cancelled)) => "Wake cancelled before the packet was sent.",
         WakeStage::Failed(WakeFailure::Connection) | WakeStage::FailedAfterSend(WakeFailure::Connection) => "Could not establish the paired remote channel. Check TV Settings and try again.",
         WakeStage::FailedAfterSend(WakeFailure::Local(_)) => "Magic packet sent, but remote readiness could not be established.",
@@ -673,6 +673,9 @@ fn power_view(
         | WakeStage::Ready
         | WakeStage::FailedAfterSend(_)
         | WakeStage::CancelledAfterSend => "Sent; delivery unconfirmed",
+        WakeStage::Failed(WakeFailure::Local(
+            crate::application::wake_transport::WakeSendError::SendFailed,
+        )) => "Send outcome unknown",
         WakeStage::Failed(WakeFailure::Local(_)) => "Failed locally",
         WakeStage::CancelledDuringSend => "Send outcome unknown",
         _ => "Waiting",

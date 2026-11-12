@@ -126,9 +126,14 @@ pub(super) fn outcome_message(receipt: &NativeReceipt) -> (MessageSeverity, Stri
             }
             .into(),
         ),
-        Some(NativeOutcome::Wake(stage)) => {
-            (MessageSeverity::Information, wake_message(*stage).into())
-        }
+        Some(NativeOutcome::Wake(stage)) => (
+            if matches!(stage, WakeStage::Failed(_) | WakeStage::FailedAfterSend(_)) {
+                MessageSeverity::Warning
+            } else {
+                MessageSeverity::Information
+            },
+            wake_message(*stage),
+        ),
         Some(NativeOutcome::Forgotten(facts) | NativeOutcome::PartialSetup(facts)) => {
             let yes = |removed| if removed { "removed" } else { "not removed" };
             (
@@ -441,8 +446,10 @@ impl App {
                 self.workflows.conflict = true;
                 self.wake_save_requested = false;
             }
-        } else if let Some(wake) = active_wake(&state) {
-            self.load_wake_configuration(&wake);
+        } else {
+            // A cleared selection must not leave the previous TV's saved MACs
+            // displayed as settings for an empty profile or a later selection.
+            self.load_wake_configuration(&active_wake(&state).unwrap_or_default());
         }
         self.view_model.update_control_state(&state.control);
         let launch = !self.launch_connected && state.startup == StartupState::Ready;
