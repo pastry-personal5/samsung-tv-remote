@@ -25,6 +25,13 @@ use futures_util::SinkExt;
 use std::collections::HashMap;
 use std::sync::Arc;
 
+/// Captured presentation context only. The client tracker owns delivery,
+/// lookup and uncertainty; these rows cannot resubmit their commands.
+struct LocalIntent {
+    command: Command,
+    operation: Option<OperationId>,
+    context: Option<workflows::IntentContext>,
+}
 pub struct App {
     main_window: Option<window::Id>,
     settings_window: Option<window::Id>,
@@ -45,7 +52,6 @@ pub struct App {
     stop_confirmation: Option<Epoch>,
     awaiting_snapshot: bool,
     client_exited: bool,
-    remote_tags: HashMap<u64, OperationId>,
     snapshot: Option<Snapshot>,
     candidates: Vec<TvHost>,
     candidate_handles: Vec<Candidate>,
@@ -60,8 +66,7 @@ pub struct App {
     wake_tick: bool,
     launch_connected: bool,
     sequence: u64,
-    submitting: HashMap<u64, Command>,
-    pending: HashMap<OperationId, Command>,
+    intents: HashMap<u64, LocalIntent>,
     workflows: workflows::Workflows,
 }
 impl App {
@@ -82,7 +87,6 @@ impl App {
                 stop_confirmation: None,
                 awaiting_snapshot: false,
                 client_exited: false,
-                remote_tags: HashMap::new(),
                 snapshot: None,
                 candidates: Vec::new(),
                 candidate_handles: Vec::new(),
@@ -97,8 +101,7 @@ impl App {
                 wake_tick: false,
                 launch_connected: false,
                 sequence: 0,
-                submitting: HashMap::new(),
-                pending: HashMap::new(),
+                intents: HashMap::new(),
                 workflows: workflows::Workflows::default(),
             },
             Task::done(Message::OpenMainWindow),
@@ -944,7 +947,7 @@ mod tests {
             },
         ));
         assert!(app.launch_connected);
-        assert!(app.submitting.is_empty());
+        assert!(app.intents.is_empty());
         assert!(!app.wake_save_requested);
         let _ = app.update(Message::RemoteUpdate(
             crate::control_client::background::Update::Status(
@@ -959,7 +962,7 @@ mod tests {
             snapshot: Box::new(projection(Some(DeviceId::new(1)), 0, 1)),
             initial: true,
         });
-        assert!(app.launch_connected && app.submitting.is_empty());
+        assert!(app.launch_connected && app.intents.is_empty());
     }
 
     #[test]
@@ -1081,7 +1084,7 @@ mod tests {
             shortcut: Shortcut::Remote(crate::RemoteAction::Up),
         });
         assert_eq!(app.view_model.messages().entries().len(), before);
-        assert!(app.pending.is_empty() && app.submitting.is_empty());
+        assert!(app.intents.is_empty());
     }
     pub(super) fn projection(target: Option<DeviceId>, generation: u64, revision: u64) -> Snapshot {
         use crate::application::device_repository::SavedDevice;
@@ -1154,18 +1157,21 @@ mod tests {
         assert_eq!(app.tv_address, "draft.invalid");
         assert_eq!(app.view_model.primary_view(), PrimaryView::Remote);
         assert!(app.observed.is_none());
-        assert!(app.pending.is_empty() && app.submitting.is_empty());
+        assert!(app.intents.is_empty());
         assert_eq!(app.view_model.messages().entries().len(), 1);
-        app.pending.insert(
-            receipt.id,
-            Command::Select {
-                target: DeviceId::new(1),
-                generation: 0,
+        app.intents.insert(
+            7,
+            LocalIntent {
+                command: Command::Select {
+                    target: DeviceId::new(1),
+                    generation: 0,
+                },
+                operation: Some(receipt.id),
+                context: None,
             },
         );
-        app.remote_tags.insert(7, receipt.id);
         let _ = app.remote_update(Update::KnownBeforeRestart { tag: 7, receipt });
-        assert!(app.pending.is_empty() && app.remote_tags.is_empty());
+        assert!(app.intents.is_empty());
         assert_eq!(app.wake_wired, "unfinished local draft");
         assert!(app.wake_dirty);
         assert_eq!(app.view_model.primary_view(), PrimaryView::Remote);
@@ -1179,7 +1185,14 @@ mod tests {
         let snapshot = projection(None, 0, 1);
         let epoch = snapshot.epoch;
         let _ = app.apply_snapshot(snapshot);
-        app.submitting.insert(3, Command::Discover);
+        app.intents.insert(
+            3,
+            LocalIntent {
+                command: Command::Discover,
+                operation: None,
+                context: None,
+            },
+        );
         let terminal = NativeReceipt {
             id: OperationId(10),
             epoch,
@@ -1204,9 +1217,16 @@ mod tests {
         };
         let _ = app.remote_admitted(3, Ok(pending));
         let _ = app.remote_admitted(3, Ok(terminal));
-        assert!(app.pending.is_empty() && app.submitting.is_empty() && app.remote_tags.is_empty());
+        assert!(app.intents.is_empty());
         assert_eq!(app.view_model.messages().entries().len(), 1);
-        app.submitting.insert(4, Command::Discover);
+        app.intents.insert(
+            4,
+            LocalIntent {
+                command: Command::Discover,
+                operation: None,
+                context: None,
+            },
+        );
         let code = crate::control_client::model::FailureCode::StaleEpoch;
         let _ = app.remote_admitted(
             4,
@@ -1216,7 +1236,7 @@ mod tests {
         );
         let _ =
             app.remote_update(crate::control_client::background::Update::Rejected { tag: 4, code });
-        assert!(app.submitting.is_empty());
+        assert!(app.intents.is_empty());
         assert_eq!(app.view_model.messages().entries().len(), 2);
     }
 }

@@ -46,7 +46,6 @@ enum Advance {
 }
 #[derive(Default)]
 pub(super) struct Workflows {
-    contexts: HashMap<u64, IntentContext>,
     origin: Option<DraftOrigin>,
     pub conflict: bool,
     draft: u64,
@@ -241,7 +240,6 @@ impl App {
     }
     pub(super) fn reset_client_workflows(&mut self) {
         self.workflows.cancel();
-        self.workflows.contexts.clear();
         self.workflows.confirmation = None;
         self.workflows.setup = self.workflows.setup.saturating_add(1);
         self.observed = None;
@@ -284,24 +282,16 @@ impl App {
             self.observed = None;
         }
     }
-    pub(super) fn capture_client_context(&mut self, tag: u64, command: &Command) {
-        let Some(state) = self.snapshot.as_ref() else {
-            return;
-        };
+    pub(super) fn capture_client_context(&self, command: &Command) -> Option<IntentContext> {
+        let state = self.snapshot.as_ref()?;
         let target = command.metadata(state.epoch).target;
-        self.workflows.contexts.insert(
-            tag,
-            IntentContext {
-                selection: Selection::of(state),
-                target_revision: target.and_then(|target| revision(state, target)),
-                setup: self.workflows.setup,
-                draft: self.workflows.draft,
-                flow: self.workflows.flow,
-            },
-        );
-    }
-    pub(super) fn take_client_context(&mut self, tag: u64) -> Option<IntentContext> {
-        self.workflows.contexts.remove(&tag)
+        Some(IntentContext {
+            selection: Selection::of(state),
+            target_revision: target.and_then(|target| revision(state, target)),
+            setup: self.workflows.setup,
+            draft: self.workflows.draft,
+            flow: self.workflows.flow,
+        })
     }
     pub(super) fn begin_wake_edit(&mut self) {
         if !self.wake_dirty {
@@ -388,21 +378,20 @@ impl App {
             self.wake_save_requested = false;
         }
     }
-    pub(super) fn end_client_context(&mut self, tag: u64, uncertain: bool) {
-        let command = self.submitting.get(&tag).or_else(|| {
-            self.remote_tags
-                .get(&tag)
-                .and_then(|id| self.pending.get(id))
-        });
-        let driving = command.is_some_and(|command| {
-            matches!(command, Command::Select { .. } | Command::SetWake { .. })
-        });
-        let configuration =
-            command.is_some_and(|command| matches!(command, Command::SetWake { .. }));
-        let context = self.take_client_context(tag);
-        if driving {
-            self.stop_client_flow(context, uncertain && configuration);
+    pub(super) fn end_client_context(&mut self, tag: u64, uncertain: bool) -> bool {
+        let Some(intent) = self.intents.remove(&tag) else {
+            return false;
+        };
+        if matches!(
+            intent.command,
+            Command::Select { .. } | Command::SetWake { .. }
+        ) {
+            self.stop_client_flow(
+                intent.context,
+                uncertain && matches!(intent.command, Command::SetWake { .. }),
+            );
         }
+        true
     }
     pub(super) fn apply_client_snapshot(&mut self, state: Snapshot) -> Task<Message> {
         if self
@@ -417,7 +406,7 @@ impl App {
             .as_ref()
             .is_some_and(|old| Selection::of(old) != Selection::of(&state));
         if changed {
-            let expected_local_select=self.submitting.values().chain(self.pending.values()).any(|command|
+            let expected_local_select=self.intents.values().map(|intent| &intent.command).any(|command|
                 matches!(command,Command::Select {target,generation} if Some(*target)==state.control.selected_device()
                     && generation.checked_add(1)==Some(state.control.selection_generation())))
                 || matches!(&self.workflows.advance,Some(Advance::Selected {target,state:terminal,..})
@@ -438,7 +427,7 @@ impl App {
                 if origin.selection != current || origin.revision != config {
                     // An observed write may precede its receipt. Hold its draft
                     // until the matching terminal receipt proves association.
-                    let own_write=origin.selection==current && self.submitting.values().chain(self.pending.values()).any(|command| {
+                    let own_write=origin.selection==current && self.intents.values().map(|intent| &intent.command).any(|command| {
                         matches!(command,Command::SetWake {target,generation,revision:base,configuration}
                             if Some(*target)==current.target && *generation==current.generation
                             && base.checked_add(1)==config && active_wake(&state)==Some(*configuration))
@@ -500,9 +489,9 @@ impl App {
                 .as_ref()
                 .is_none_or(|state| state.storage_pending || state.admission_closed)
             || self
-                .submitting
+                .intents
                 .values()
-                .chain(self.pending.values())
+                .map(|intent| &intent.command)
                 .any(|command| matches!(command, Command::SetWake { .. }))
         {
             return Task::none();

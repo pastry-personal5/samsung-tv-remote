@@ -25,7 +25,7 @@ impl App {
                 "Control server is unavailable; the action was not submitted.",
             );
         }
-        if self.pending.len() + self.submitting.len() >= 64 {
+        if self.intents.len() >= 64 {
             return self.publish(
                 MessageSeverity::Warning,
                 MessageSource::MainWindow,
@@ -40,8 +40,15 @@ impl App {
             command: command.clone(),
         };
         let remote = remote.clone();
-        self.capture_client_context(sequence, &command);
-        self.submitting.insert(sequence, command);
+        let context = self.capture_client_context(&command);
+        self.intents.insert(
+            sequence,
+            LocalIntent {
+                command,
+                operation: None,
+                context,
+            },
+        );
         Task::perform(
             async move { remote.submit(sequence, request).await },
             move |result| Message::RemoteAdmitted(sequence, result),
@@ -67,9 +74,7 @@ impl App {
                 }
                 if replaced {
                     self.reset_client_workflows();
-                    self.pending.clear();
-                    self.submitting.clear();
-                    self.remote_tags.clear();
+                    self.intents.clear();
                 }
                 let apply = self.apply_snapshot(*snapshot);
                 if replaced {
@@ -135,12 +140,7 @@ impl App {
                 self.remote_admitted(tag, Err(SubmitError::NotAdmitted(code)))
             }
             Update::KnownBeforeRestart { tag, receipt } => {
-                self.end_client_context(tag, true);
-                let mut active = self.submitting.remove(&tag).is_some();
-                if let Some(id) = self.remote_tags.remove(&tag) {
-                    active |= self.pending.remove(&id).is_some();
-                }
-                if !active {
+                if !self.end_client_context(tag, true) {
                     return Task::none();
                 }
                 self.publish(
@@ -150,12 +150,7 @@ impl App {
                 )
             }
             Update::Unknown { tag, .. } => {
-                self.end_client_context(tag, true);
-                let mut active = self.submitting.remove(&tag).is_some();
-                if let Some(id) = self.remote_tags.remove(&tag) {
-                    active |= self.pending.remove(&id).is_some();
-                }
-                if !active {
+                if !self.end_client_context(tag, true) {
                     return Task::none();
                 }
                 self.publish(MessageSeverity::Warning,MessageSource::MainWindow,"The original outcome is unavailable or belongs to an earlier server lifetime. It will not be repeated.")
@@ -164,25 +159,39 @@ impl App {
     }
     pub(super) fn remote_admitted(
         &mut self,
-        sequence: u64,
+        tag: u64,
         result: Result<NativeReceipt, SubmitError>,
     ) -> Task<Message> {
+        let Some(intent) = self.intents.get(&tag) else {
+            return Task::none();
+        };
         match result {
             Ok(receipt)=>{
-                if !self.submitting.contains_key(&sequence) && self.remote_tags.get(&sequence) != Some(&receipt.id) {return Task::none();}
-                if self.snapshot.as_ref().is_none_or(|snapshot|snapshot.epoch!=receipt.epoch){return self.publish(MessageSeverity::Warning,MessageSource::MainWindow,"The server lifetime changed before the receipt arrived; no action will be repeated.");}
-                if let Some(command) = self.submitting.remove(&sequence) {
-                    self.remote_tags.insert(sequence, receipt.id);
-                    self.pending.insert(receipt.id, command);
-                } else if self.remote_tags.get(&sequence) != Some(&receipt.id) { return Task::none(); }
-                if receipt.terminal { self.remote_complete(receipt) } else { Task::none() }
+                if intent.operation.is_some_and(|id|id!=receipt.id)
+                    || self.intents.iter().any(|(other,intent)| *other!=tag && intent.operation==Some(receipt.id)) {
+                    return Task::none();
+                }
+                if self.snapshot.as_ref().is_none_or(|snapshot|snapshot.epoch!=receipt.epoch) {
+                    return self.publish(MessageSeverity::Warning,MessageSource::MainWindow,"The server lifetime changed before the receipt arrived; no action will be repeated.");
+                }
+                if receipt.terminal {
+                    let intent=self.intents.remove(&tag).expect("known local context");
+                    let follow=self.client_terminal(&intent.command,intent.context,&receipt);
+                    let (severity,text)=workflows::outcome_message(&receipt);
+                    if !self.workflows.conflict {self.settings_status=text.clone();}
+                    Task::batch([follow,self.publish(severity,MessageSource::MainWindow,text)])
+                } else {
+                    self.intents.get_mut(&tag).expect("known local context").operation=Some(receipt.id);
+                    Task::none()
+                }
             }
-            Err(SubmitError::Superseded) => Task::none(),
-            Err(SubmitError::Ambiguous) if !self.submitting.contains_key(&sequence) && !self.remote_tags.contains_key(&sequence) => Task::none(),
+            // Known admission is monotonic even if a cancelled/late direct
+            // callback disagrees. Only the tracker can settle it by lookup.
+            Err(_) if intent.operation.is_some()=>Task::none(),
+            Err(SubmitError::Superseded)=>Task::none(),
             Err(SubmitError::Ambiguous)=>self.publish(MessageSeverity::Warning,MessageSource::MainWindow,"The request reply was lost. Recovering its original result by lookup; it will not be submitted again."),
-            Err(_) if !self.submitting.contains_key(&sequence) && !self.remote_tags.contains_key(&sequence) => Task::none(),
             Err(error)=>{
-                self.end_client_context(sequence,false);self.submitting.remove(&sequence);
+                self.end_client_context(tag,false);
                 let text=match error {
                     SubmitError::NotAdmitted(code)=>workflows::failure_message(code),
                     SubmitError::Unavailable=>"The server disconnected before submission. No TV request was made.",
@@ -193,34 +202,6 @@ impl App {
                 self.publish(MessageSeverity::Warning,MessageSource::MainWindow,text)
             }
         }
-    }
-    pub(super) fn remote_complete(&mut self, receipt: NativeReceipt) -> Task<Message> {
-        if !receipt.terminal
-            || self
-                .snapshot
-                .as_ref()
-                .is_none_or(|snapshot| snapshot.epoch != receipt.epoch)
-        {
-            return Task::none();
-        }
-        let Some(command) = self.pending.remove(&receipt.id) else {
-            return Task::none();
-        };
-        let tag = self
-            .remote_tags
-            .iter()
-            .find_map(|(tag, id)| (*id == receipt.id).then_some(*tag));
-        let context = tag.and_then(|tag| self.take_client_context(tag));
-        self.remote_tags.retain(|_, id| *id != receipt.id);
-        let follow = self.client_terminal(&command, context, &receipt);
-        let (severity, text) = workflows::outcome_message(&receipt);
-        if !self.workflows.conflict {
-            self.settings_status = text.clone();
-        }
-        Task::batch([
-            follow,
-            self.publish(severity, MessageSource::MainWindow, text),
-        ])
     }
 }
 pub(super) fn status_text(status: &Status) -> String {
@@ -282,26 +263,12 @@ fn history_message(receipt: &NativeReceipt) -> String {
         Some(NativeOutcome::Probed(_)) => {
             "An earlier TV check finished. Check again to confirm Pairing in this window.".into()
         }
-        Some(NativeOutcome::Paired(_)) => "An earlier Pairing was approved and saved.".into(),
-        Some(NativeOutcome::Saved(_)) => "An earlier settings change was saved.".into(),
         Some(NativeOutcome::RemoteReady) => {
             "An earlier connection became ready. Current readiness is shown separately.".into()
         }
-        Some(NativeOutcome::Written) => {
-            "An earlier remote command was written. Physical TV state was not observed.".into()
-        }
-        Some(NativeOutcome::Uncertain) => {
-            "An earlier command may have been sent. It will not be repeated.".into()
-        }
-        Some(NativeOutcome::NotSent(_)) => "An earlier remote command was not sent.".into(),
-        Some(NativeOutcome::Wake(stage)) => format!("Earlier Wake: {}", wake_message(*stage)),
-        Some(NativeOutcome::Forgotten(_)) => "An earlier device cleanup completed.".into(),
-        Some(NativeOutcome::PartialSetup(_)) => {
-            "An earlier cleanup was incomplete. Review Settings before explicit recovery.".into()
-        }
-        Some(NativeOutcome::Failed(_)) => {
-            "An earlier operation failed. Review the current TV and Settings before another intent."
-                .into()
+        Some(_) => {
+            let (_, fact) = workflows::outcome_message(receipt);
+            format!("Earlier operation: {fact}")
         }
         None => "An earlier operation is still pending.".into(),
     }

@@ -167,7 +167,7 @@ async fn client_port_offline_intents_do_not_submit_or_replay_when_connection_ret
     run(&mut app, task).await;
     client.online.store(true, Ordering::SeqCst);
     assert!(client.requests.lock().unwrap().is_empty());
-    assert!(app.submitting.is_empty() && app.pending.is_empty());
+    assert!(app.intents.is_empty());
     let task = app.update(Message::ConnectSelected);
     run(&mut app, task).await;
     assert_eq!(client.requests.lock().unwrap().len(), 1);
@@ -519,7 +519,7 @@ async fn client_workflow_unknown_save_and_reattach_never_replay_or_complete_a_ne
     run(&mut app, reconnect).await;
     assert!(app.wake_dirty && app.workflows.conflict);
     assert_eq!(client.requests.lock().unwrap().len(), 1);
-    assert!(app.pending.is_empty() && app.submitting.is_empty());
+    assert!(app.intents.is_empty());
 }
 
 #[tokio::test]
@@ -1172,8 +1172,151 @@ async fn client_lifecycle_missing_signed_identity_blocks_initialization_and_all_
         .contains("signed app bundle"));
     let task = app.update(Message::RecheckServer);
     run(&mut app, task).await;
-    assert!(!app.remote_management && app.submitting.is_empty());
+    assert!(!app.remote_management && app.intents.is_empty());
     let task = app.update(Message::DiscoverTv);
     run(&mut app, task).await;
-    assert!(app.submitting.is_empty());
+    assert!(app.intents.is_empty());
+}
+
+#[tokio::test]
+async fn local_intent_context_capacity_releases_only_when_the_original_intent_settles() {
+    use crate::control_client::background::UnknownReason;
+    let (mut app, client) = app();
+    for id in 1..=64 {
+        queue(
+            &client,
+            native(
+                &Command::Discover,
+                id,
+                None,
+                Some(DeviceId::new(1)),
+                4,
+                Some(0),
+            ),
+        );
+        let task = app.update(Message::DiscoverTv);
+        run(&mut app, task).await;
+    }
+    assert_eq!(app.intents.len(), 64);
+    let task = app.update(Message::DiscoverTv);
+    run(&mut app, task).await;
+    assert_eq!(client.requests.lock().unwrap().len(), 64);
+    let task = app.remote_update(Update::Unknown {
+        tag: 1,
+        reason: UnknownReason::OutcomeUnavailable,
+    });
+    run(&mut app, task).await;
+    assert_eq!(app.intents.len(), 63);
+    queue(
+        &client,
+        native(
+            &Command::Discover,
+            65,
+            None,
+            Some(DeviceId::new(1)),
+            4,
+            Some(0),
+        ),
+    );
+    let task = app.update(Message::DiscoverTv);
+    run(&mut app, task).await;
+    assert_eq!(app.intents.len(), 64);
+    assert_eq!(client.requests.lock().unwrap().len(), 65);
+    assert!(!app.intents.contains_key(&1));
+}
+#[tokio::test]
+async fn local_known_admission_cannot_be_replaced_by_late_errors_or_another_operations_receipt() {
+    use crate::control_client::projection::NativeOutcome;
+    let (mut app, client) = app();
+    queue(
+        &client,
+        native(
+            &Command::Discover,
+            1,
+            None,
+            Some(DeviceId::new(1)),
+            4,
+            Some(0),
+        ),
+    );
+    let task = app.update(Message::DiscoverTv);
+    run(&mut app, task).await;
+    let count = app.view_model.messages().entries().len();
+    for result in [
+        Err(SubmitError::Ambiguous),
+        Err(SubmitError::NotAdmitted(FailureCode::Busy)),
+        Ok(native(
+            &Command::Discover,
+            2,
+            Some(NativeOutcome::Discovered(vec![])),
+            Some(DeviceId::new(1)),
+            4,
+            Some(0),
+        )),
+    ] {
+        let task = app.remote_admitted(1, result);
+        run(&mut app, task).await;
+    }
+    assert_eq!(app.intents.get(&1).unwrap().operation, Some(OperationId(1)));
+    assert_eq!(app.view_model.messages().entries().len(), count);
+    let task = app.remote_admitted(
+        1,
+        Ok(native(
+            &Command::Discover,
+            1,
+            Some(NativeOutcome::Discovered(vec![])),
+            Some(DeviceId::new(1)),
+            4,
+            Some(0),
+        )),
+    );
+    run(&mut app, task).await;
+    assert!(app.intents.is_empty());
+    assert_eq!(client.requests.lock().unwrap().len(), 1);
+}
+
+#[tokio::test]
+async fn restored_history_keeps_precise_failure_and_cleanup_facts_without_local_intent() {
+    use crate::control_client::{model::CleanupFacts, projection::NativeOutcome};
+    let (mut app, client) = app();
+    app.wake_dirty = true;
+    app.wake_wired = "unfinished draft".into();
+    for (id, outcome, expected) in [
+        (
+            80,
+            NativeOutcome::Failed(FailureCode::NetworkPermissionDenied),
+            "Local Network access is denied",
+        ),
+        (
+            81,
+            NativeOutcome::PartialSetup(CleanupFacts {
+                credential_removed: false,
+                trust_removed: true,
+                record_removed: true,
+            }),
+            "credential not removed; trust removed; saved record removed",
+        ),
+    ] {
+        let receipt = native(
+            &Command::Discover,
+            id,
+            Some(outcome),
+            Some(DeviceId::new(1)),
+            4,
+            Some(0),
+        );
+        let task = app.remote_update(Update::History(receipt));
+        run(&mut app, task).await;
+        assert!(app
+            .view_model
+            .messages()
+            .entries()
+            .back()
+            .unwrap()
+            .text
+            .contains(expected));
+    }
+    assert!(app.intents.is_empty() && client.requests.lock().unwrap().is_empty());
+    assert_eq!(app.wake_wired, "unfinished draft");
+    assert!(app.wake_dirty);
 }
