@@ -539,8 +539,23 @@ async fn gui_client_reattaches_after_process_outage_without_replaying_setup_conn
 
 #[test]
 fn executable_modes_select_the_gui_probe_before_any_local_adapter() {
-    use samsung_tv_remote::server::entry::{parse, Mode};
+    use samsung_tv_remote::server::entry::{parse, Action, Mode};
     assert_eq!(parse(&[]).unwrap(), Mode::Gui);
+    assert_eq!(
+        parse(&["--server".into()]).unwrap(),
+        Mode::Production {
+            action: Action::Server,
+            inherited: false
+        }
+    );
+    assert_eq!(
+        parse(&["--server".into(), "--inherited-owner".into()]).unwrap(),
+        Mode::Production {
+            action: Action::Server,
+            inherited: true
+        }
+    );
+    assert!(parse(&["--server-start".into(), "--inherited-owner".into()]).is_err());
     assert!(matches!(
         parse(&[
             "--gui-probe".into(),
@@ -893,4 +908,151 @@ async fn termination_signal_models_logout_without_an_intentional_stop_or_implici
     assert_eq!(snapshot["recent_operations"], json!([]));
     fixture.run("--server-stop");
     fixture.owner_settled();
+}
+
+#[tokio::test]
+async fn native_stop_is_epoch_fenced_sticky_for_all_clients_and_only_explicit_resume_reopens() {
+    use samsung_tv_remote::{
+        application::control_service::Epoch,
+        control_client::{
+            background::{Config, Remote, Status, Update},
+            port::{StopAcknowledgment, StopSettlement},
+            reconnect::Blocked,
+        },
+    };
+    async fn attached(updates: &mut tokio::sync::mpsc::Receiver<Update>) -> Epoch {
+        tokio::time::timeout(Duration::from_secs(15), async {
+            let mut epoch = None;
+            loop {
+                match updates.recv().await.unwrap() {
+                    Update::Snapshot {
+                        snapshot,
+                        initial: true,
+                    } => epoch = Some(snapshot.epoch),
+                    Update::Status(Status::Connected) => {
+                        return epoch.expect("atomic state before connected")
+                    }
+                    _ => (),
+                }
+            }
+        })
+        .await
+        .unwrap()
+    }
+    async fn stopped(updates: &mut tokio::sync::mpsc::Receiver<Update>) {
+        tokio::time::timeout(Duration::from_secs(15), async {
+            loop {
+                if matches!(
+                    updates.recv().await.unwrap(),
+                    Update::Status(Status::Blocked(Blocked::Stopped))
+                ) {
+                    return;
+                }
+            }
+        })
+        .await
+        .unwrap()
+    }
+    let fixture = Fixture::new();
+    fixture.run("--server-start");
+    let config = Config {
+        executable: BINARY.into(),
+        base: fixture.base(),
+    };
+    let remote = Remote::start(config.clone()).await.unwrap();
+    let mut updates = remote.take_updates().unwrap();
+    let epoch = attached(&mut updates).await;
+    let observer = Remote::start(config.clone()).await.unwrap();
+    let mut observations = observer.take_updates().unwrap();
+    assert_eq!(attached(&mut observations).await, epoch);
+    let client = fixture.client().await;
+    assert!(matches!(
+        launch::stop_expected(
+            &fixture.base(),
+            &client,
+            Some(Epoch::from_u128(epoch.as_u128().wrapping_add(1)))
+        )
+        .await,
+        Err(launch::LaunchError::StaleEpoch)
+    ));
+    assert_eq!(client.call("GET", "/v1/ready", None).await.unwrap().0, 200);
+    let report = remote.stop(epoch).await.unwrap();
+    assert_eq!(report.acknowledgment, StopAcknowledgment::Durable);
+    assert!(matches!(
+        report.settlement,
+        StopSettlement::Observed | StopSettlement::Pending
+    ));
+    stopped(&mut updates).await;
+    stopped(&mut observations).await;
+    assert!(!remote.connected() && !observer.connected());
+    assert!(matches!(
+        observer.recheck().await,
+        Err(launch::LaunchError::Stopped)
+    ));
+    remote.disconnect();
+    observer.disconnect();
+    fixture.owner_settled();
+    let reopened = Remote::start(config).await.unwrap();
+    let mut fresh = reopened.take_updates().unwrap();
+    stopped(&mut fresh).await;
+    assert!(!reopened.connected());
+    assert!(matches!(
+        reopened.recheck().await,
+        Err(launch::LaunchError::Stopped)
+    ));
+    reopened.resume().await.unwrap();
+    let resumed = attached(&mut fresh).await;
+    assert_ne!(resumed, epoch);
+    let state = state(&fixture.client().await).await;
+    assert_eq!(state["devices"], json!([]));
+    assert_eq!(state["selected"], Value::Null);
+    reopened.disconnect();
+    assert!(matches!(
+        reopened.resume().await,
+        Err(launch::LaunchError::Unavailable)
+    ));
+    assert!(matches!(
+        reopened.restart().await,
+        Err(launch::LaunchError::Unavailable)
+    ));
+    assert!(matches!(
+        reopened.recheck().await,
+        Err(launch::LaunchError::Unavailable)
+    ));
+}
+
+#[tokio::test]
+async fn native_start_status_names_new_owner_creation_separately_from_attachment() {
+    use samsung_tv_remote::control_client::background::{Config, Remote, Status, Update};
+    let fixture = Fixture::new();
+    let config = Config {
+        executable: BINARY.into(),
+        base: fixture.base(),
+    };
+    for starts_owner in [true, false] {
+        let remote = Remote::start(config.clone()).await.unwrap();
+        let mut updates = remote.take_updates().unwrap();
+        let started = tokio::time::timeout(Duration::from_secs(15), async {
+            let mut started = false;
+            let mut snapshot = false;
+            loop {
+                match updates.recv().await.unwrap() {
+                    Update::Status(Status::Starting) => started = true,
+                    Update::Snapshot { initial: true, .. } => snapshot = true,
+                    Update::Status(Status::Connected) => {
+                        assert!(snapshot);
+                        return started;
+                    }
+                    Update::Status(Status::Blocked(reason)) => {
+                        panic!("unexpected blocked status {reason:?}")
+                    }
+                    _ => (),
+                }
+            }
+        })
+        .await
+        .unwrap();
+        assert_eq!(started, starts_owner);
+        remote.disconnect();
+    }
 }

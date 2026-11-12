@@ -1,5 +1,5 @@
 //! Shared HTTP/MCP access policy. Credentials never become registry identities.
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::net::SocketAddr;
 use std::sync::{
     atomic::{AtomicBool, Ordering},
@@ -57,6 +57,7 @@ impl AuthorizedClient {
 
 struct State {
     credentials: HashMap<ClientId, Credential>,
+    known: HashSet<ClientId>,
     window: Instant,
     attempts: usize,
     probes: HashMap<String, ReadinessProbe>,
@@ -105,6 +106,7 @@ impl AccessGate {
             authority,
             state: Mutex::new(State {
                 credentials: HashMap::new(),
+                known: HashSet::new(),
                 window: Instant::now(),
                 attempts: 0,
                 probes: HashMap::new(),
@@ -160,8 +162,31 @@ impl AccessGate {
         secret: &[u8; 32],
     ) -> Result<(), AccessError> {
         let mut state = self.state.lock().expect("access state");
+        Self::install(&mut state, identity, capability, secret)
+    }
+
+    /// Initial enrollment after a blocked store is distinct from rotation.
+    /// A revoked identity leaves a tombstone and can never enter this path.
+    pub(crate) fn enroll_initial(
+        &self,
+        identity: ClientId,
+        capability: Capability,
+        secret: &[u8; 32],
+    ) -> Result<(), AccessError> {
+        let mut state = self.state.lock().expect("access state");
+        if state.known.contains(&identity) {
+            return Err(AccessError::Forbidden);
+        }
+        Self::install(&mut state, identity, capability, secret)
+    }
+    fn install(
+        state: &mut State,
+        identity: ClientId,
+        capability: Capability,
+        secret: &[u8; 32],
+    ) -> Result<(), AccessError> {
         let digest: [u8; 32] = Sha256::digest(secret).into();
-        if (!state.credentials.contains_key(&identity) && state.credentials.len() >= 2)
+        if (!state.known.contains(&identity) && state.known.len() >= 2)
             || state
                 .credentials
                 .iter()
@@ -174,6 +199,7 @@ impl AccessGate {
             let _ = old.revoked.send(true);
         }
         let (revoked, _) = watch::channel(false);
+        state.known.insert(identity);
         state.credentials.insert(
             identity,
             Credential {
@@ -188,6 +214,9 @@ impl AccessGate {
 
     pub fn revoke(&self, identity: ClientId) {
         let mut state = self.state.lock().expect("access state");
+        if state.known.len() < 2 {
+            state.known.insert(identity);
+        }
         if let Some(old) = state.credentials.remove(&identity) {
             old.authorization.revoke();
             let _ = old.revoked.send(true);

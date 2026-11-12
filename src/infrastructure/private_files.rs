@@ -9,6 +9,23 @@ use std::os::unix::fs::{MetadataExt, PermissionsExt};
 use std::path::{Component, Path};
 
 pub const DEVELOPMENT_NAMESPACE: &str = "m8-fake-v1";
+pub const CONTROL_NAMESPACE: &str = "control-v1";
+
+/// Durable identity is independent of build identity and cannot be supplied
+/// by an untrusted record. Fake and production compositions choose it in code.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Namespace {
+    Development,
+    Control,
+}
+impl Namespace {
+    pub const fn name(self) -> &'static str {
+        match self {
+            Self::Development => DEVELOPMENT_NAMESPACE,
+            Self::Control => CONTROL_NAMESPACE,
+        }
+    }
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FileError {

@@ -29,7 +29,7 @@ use samsung_tv_remote::{
 use std::{
     path::Path,
     sync::{
-        atomic::{AtomicUsize, Ordering},
+        atomic::{AtomicBool, AtomicUsize, Ordering},
         Arc, Mutex,
     },
     time::Duration,
@@ -37,11 +37,15 @@ use std::{
 struct Credentials {
     gui: Mutex<[u8; 32]>,
     reads: AtomicUsize,
+    locked: AtomicBool,
 }
 impl ApiCredentials for Credentials {
     fn load(&self, role: Role) -> Result<[u8; 32], BootstrapError> {
         Ok(if role == Role::Gui {
             self.reads.fetch_add(1, Ordering::SeqCst);
+            if self.locked.load(Ordering::SeqCst) {
+                return Err(BootstrapError::InteractionRequired);
+            }
             *self.gui.lock().unwrap()
         } else {
             [2; 32]
@@ -104,6 +108,7 @@ async fn gui_actor_rotates_to_a_fresh_snapshot_then_blocks_on_revocation_without
     let credentials = Arc::new(Credentials {
         gui: Mutex::new([1; 32]),
         reads: AtomicUsize::new(0),
+        locked: AtomicBool::new(true),
     });
     let location = bootstrap::socket::Location::for_profile(&base_path).unwrap();
     let socket = location.bind().await.unwrap();
@@ -144,6 +149,29 @@ async fn gui_actor_rotates_to_a_fresh_snapshot_then_blocks_on_revocation_without
             .clone()
             .serve(socket, lifecycle.http_shutdown.clone()),
     );
+    let remote = Remote::start(Config {
+        executable: executable.into(),
+        base: base_path.clone(),
+    })
+    .await
+    .unwrap();
+    let mut updates = remote.take_updates().unwrap();
+    tokio::time::timeout(Duration::from_secs(10), async {
+        loop {
+            if matches!(
+                updates.recv().await.unwrap(),
+                Update::Status(Status::Blocked(Blocked::InteractionRequired))
+            ) {
+                break;
+            }
+        }
+    })
+    .await
+    .unwrap();
+    assert!(!remote.connected());
+    credentials.locked.store(false, Ordering::SeqCst);
+    remote.recheck().await.unwrap();
+    let first = initial(&mut updates).await;
     let old_client = authenticate(
         &location.path,
         &location.profile,
@@ -154,16 +182,28 @@ async fn gui_actor_rotates_to_a_fresh_snapshot_then_blocks_on_revocation_without
     )
     .await
     .unwrap();
-    let remote = Remote::start(Config {
-        executable: executable.into(),
-        base: base_path,
-    })
-    .await
-    .unwrap();
-    let mut updates = remote.take_updates().unwrap();
-    let first = initial(&mut updates).await;
+    assert_eq!(profile.effects.connections.load(Ordering::SeqCst), 0);
+    assert_eq!(profile.effects.writes.load(Ordering::SeqCst), 0);
     assert_eq!(first.epoch, epoch);
     assert!(first.devices.is_empty());
+    assert!(matches!(
+        remote
+            .submit(
+                99,
+                Request {
+                    epoch: Epoch::from_u128(epoch.as_u128().wrapping_add(1)),
+                    key: uuid::Uuid::new_v4().to_string(),
+                    command: Command::Discover,
+                }
+            )
+            .await,
+        Err(
+            samsung_tv_remote::control_client::background::SubmitError::NotAdmitted(
+                samsung_tv_remote::control_client::model::FailureCode::StaleEpoch
+            )
+        )
+    ));
+    assert_eq!(profile.effects.discovery.load(Ordering::SeqCst), 0);
     let request = |command| Request {
         epoch,
         key: uuid::Uuid::new_v4().to_string(),
@@ -205,6 +245,39 @@ async fn gui_actor_rotates_to_a_fresh_snapshot_then_blocks_on_revocation_without
     })
     .await
     .unwrap();
+    // A second GUI instance restores private references from its atomic
+    // snapshot. It owns no local intent, so recovery can only report history.
+    let observer = Remote::start(Config {
+        executable: executable.into(),
+        base: base_path,
+    })
+    .await
+    .unwrap();
+    let mut history = observer.take_updates().unwrap();
+    let restored = initial(&mut history).await;
+    assert_eq!(
+        restored.control.selected_device(),
+        paired.control.selected_device()
+    );
+    tokio::time::timeout(Duration::from_secs(5), async {
+        loop {
+            match history.recv().await.unwrap() {
+                Update::History(receipt) if receipt.id == pair.id => {
+                    assert!(matches!(
+                        receipt.outcome,
+                        Some(
+                            samsung_tv_remote::control_client::projection::NativeOutcome::Paired(_)
+                        )
+                    ));
+                    break;
+                }
+                Update::Recovered { .. } => panic!("history acquired an originating local intent"),
+                _ => (),
+            }
+        }
+    })
+    .await
+    .unwrap();
     let device = paired.control.selected_device().unwrap();
     let generation = paired.control.selection_generation();
     let action = terminal(
@@ -218,6 +291,24 @@ async fn gui_actor_rotates_to_a_fresh_snapshot_then_blocks_on_revocation_without
     )
     .await;
     assert_eq!(action.kind(), "written");
+    tokio::time::timeout(Duration::from_secs(5), async {
+        loop {
+            match history.recv().await.unwrap() {
+                Update::History(receipt) if receipt.id == action.id => {
+                    assert!(matches!(
+                        receipt.outcome,
+                        Some(samsung_tv_remote::control_client::projection::NativeOutcome::Written)
+                    ));
+                    break;
+                }
+                Update::Recovered { .. } => panic!("shared event became a local continuation"),
+                _ => (),
+            }
+        }
+    })
+    .await
+    .unwrap();
+    observer.disconnect();
     *credentials.gui.lock().unwrap() = [9; 32];
     bootstrap.refresh(Role::Gui).unwrap();
     let refreshed = initial(&mut updates).await;
@@ -228,10 +319,15 @@ async fn gui_actor_rotates_to_a_fresh_snapshot_then_blocks_on_revocation_without
         old_client.call("GET", "/v1/ready", None).await.unwrap().0,
         401
     );
-    assert_eq!(
-        remote.operation(epoch, action.id).await.unwrap().result,
-        action.result
-    );
+    let retained = remote.operation(epoch, action.id).await.unwrap();
+    assert!(matches!(
+        retained.outcome,
+        Some(samsung_tv_remote::control_client::projection::NativeOutcome::Written)
+    ));
+    assert_eq!(retained.id, action.id);
+    assert_eq!(retained.target, action.target);
+    assert_eq!(retained.generation, action.generation);
+    assert_eq!(retained.terminal_state, action.terminal_state);
     assert_eq!(profile.effects.probes.load(Ordering::SeqCst), 1);
     assert_eq!(profile.effects.approvals.load(Ordering::SeqCst), 1);
     assert_eq!(profile.effects.connections.load(Ordering::SeqCst), 1);
@@ -257,6 +353,20 @@ async fn gui_actor_rotates_to_a_fresh_snapshot_then_blocks_on_revocation_without
         credentials.reads.load(Ordering::SeqCst),
         reads,
         "revocation must not keep authenticating automatically"
+    );
+    assert!(matches!(
+        remote.recheck().await,
+        Err(samsung_tv_remote::server::launch::LaunchError::Bootstrap(
+            BootstrapError::Denied
+        ))
+    ));
+    assert!(!remote.connected());
+    assert_eq!(credentials.reads.load(Ordering::SeqCst), reads + 1);
+    tokio::time::sleep(Duration::from_millis(1100)).await;
+    assert_eq!(
+        credentials.reads.load(Ordering::SeqCst),
+        reads + 1,
+        "one explicit check must neither retry nor restore revoked access"
     );
     assert_eq!(profile.effects.writes.load(Ordering::SeqCst), 1);
     remote.disconnect();

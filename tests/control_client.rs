@@ -84,6 +84,9 @@ async fn blocked_states_require_the_matching_resolution_and_exit_is_terminal() {
         Blocked::BootstrapDenied,
         Blocked::InteractionRequired,
         Blocked::UnsafeMetadata,
+        Blocked::StopUnconfirmed,
+        Blocked::RecheckFailed,
+        Blocked::SigningRequired,
     ] {
         let mut policy = Reconnect::new(Instant::now());
         policy.block(reason);
@@ -108,4 +111,48 @@ async fn blocked_states_require_the_matching_resolution_and_exit_is_terminal() {
         policy.resolved(reason, Instant::now());
         assert_eq!(policy.state(), State::Exited);
     }
+}
+
+#[tokio::test(start_paused = true)]
+async fn explicit_recheck_preserves_backoff_and_cannot_resume_restart_or_overlap() {
+    let mut policy = Reconnect::new(Instant::now());
+    assert!(policy.begin_attempt(Instant::now()));
+    assert!(!policy.recheck(Instant::now()));
+    policy.failed(Instant::now());
+    for reason in [
+        Blocked::Stopped,
+        Blocked::IncompatibleBuild,
+        Blocked::SigningRequired,
+    ] {
+        policy.block(reason);
+        assert!(!policy.recheck(Instant::now()));
+        assert_eq!(policy.state(), State::Blocked(reason));
+    }
+    for reason in [
+        Blocked::Revoked,
+        Blocked::BootstrapDenied,
+        Blocked::InteractionRequired,
+        Blocked::UnsafeMetadata,
+        Blocked::StopUnconfirmed,
+        Blocked::RecheckFailed,
+    ] {
+        policy.block(reason);
+        assert!(policy.recheck(Instant::now()));
+        assert!(policy.begin_attempt(Instant::now()));
+        policy.block(reason);
+        tokio::time::advance(MAX_DELAY * 5).await;
+        assert!(!policy.begin_attempt(Instant::now()));
+    }
+    assert!(policy.recheck(Instant::now()));
+    assert!(policy.begin_attempt(Instant::now()));
+    policy.failed(Instant::now());
+    assert_eq!(
+        policy.state(),
+        State::Waiting {
+            due: Instant::now() + Duration::from_secs(2)
+        }
+    );
+    policy.exit();
+    assert!(!policy.recheck(Instant::now()));
+    assert_eq!(policy.state(), State::Exited);
 }

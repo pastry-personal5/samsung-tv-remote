@@ -208,6 +208,41 @@ pub fn snapshot(v: &Value) -> Result<Snapshot, ClientError> {
         pairing_pending: flag(v, "pairing_pending")?,
     })
 }
+pub(crate) fn initial(v: &Value) -> Result<(Snapshot, Vec<OperationId>), ClientError> {
+    let snapshot = snapshot(v)?;
+    let values = v["recent_operations"]
+        .as_array()
+        .filter(|values| values.len() <= 64)
+        .ok_or_else(invalid)?;
+    let mut references = Vec::with_capacity(values.len());
+    for value in values {
+        let id = wire::parse_operation(
+            value.as_str().ok_or_else(invalid)?,
+            snapshot.epoch,
+            snapshot.epoch,
+        )
+        .map_err(|_| invalid())?;
+        if references.contains(&id) {
+            return Err(invalid());
+        }
+        references.push(id);
+    }
+    Ok((snapshot, references))
+}
+pub(crate) fn changed(
+    v: &Value,
+    kind: &str,
+) -> Result<(Snapshot, Option<OperationId>), ClientError> {
+    let snapshot = snapshot(v)?;
+    let reference = match kind {
+        "operation_changed" if matches!(v["phase"].as_str(), Some("pending" | "terminal")) => {
+            Some(operation(v, "operation_id", snapshot.epoch)?)
+        }
+        "state_changed" if v["operation_id"].is_null() && v["phase"].is_null() => None,
+        _ => return Err(invalid()),
+    };
+    Ok((snapshot, reference))
+}
 fn wake(v: &Value) -> Result<WakeStage, ClientError> {
     let failure = || -> Result<WakeFailure, ClientError> {
         Ok(match text(v, "failure")? {
@@ -223,7 +258,7 @@ fn wake(v: &Value) -> Result<WakeStage, ClientError> {
             _ => return Err(invalid()),
         })
     };
-    Ok(match text(v, "stage")? {
+    let stage = match text(v, "stage")? {
         "configuration_required" => WakeStage::ConfigurationRequired,
         "idle" => WakeStage::Idle,
         "checking_connection" => WakeStage::CheckingConnection,
@@ -237,15 +272,76 @@ fn wake(v: &Value) -> Result<WakeStage, ClientError> {
         "cancelled_during_send" => WakeStage::CancelledDuringSend,
         "cancelled_after_send" => WakeStage::CancelledAfterSend,
         _ => return Err(invalid()),
-    })
+    };
+    let (packet, remote) = match stage {
+        WakeStage::ConfigurationRequired | WakeStage::Idle => ("not_sent", "not_ready"),
+        WakeStage::CheckingConnection | WakeStage::Cancelled => ("not_sent", "unknown"),
+        WakeStage::PacketSending | WakeStage::CancelledDuringSend => ("uncertain", "unknown"),
+        WakeStage::Reconnecting | WakeStage::CancelledAfterSend => ("sent", "unknown"),
+        WakeStage::Connected => ("not_sent", "ready"),
+        WakeStage::Ready => ("sent", "ready"),
+        WakeStage::Failed(WakeFailure::Local(WakeSendError::SendFailed)) => {
+            ("uncertain", "not_ready")
+        }
+        WakeStage::Failed(_) => ("not_sent", "not_ready"),
+        WakeStage::FailedAfterSend(_) => ("sent", "not_ready"),
+    };
+    if text(v, "packet")? != packet || text(v, "remote")? != remote {
+        return Err(invalid());
+    }
+    if !matches!(stage, WakeStage::Failed(_) | WakeStage::FailedAfterSend(_))
+        && !v["failure"].is_null()
+    {
+        return Err(invalid());
+    }
+    Ok(stage)
+}
+
+/// Fully decoded terminal facts. No JSON is exposed to presentation code.
+#[derive(Debug, Clone)]
+pub enum NativeOutcome {
+    Discovered(Vec<Candidate>),
+    Probed(Box<Observation>),
+    Paired(DeviceId),
+    Saved(DeviceId),
+    RemoteReady,
+    Written,
+    Uncertain,
+    NotSent(super::model::NotSent),
+    Wake(WakeStage),
+    Forgotten(super::model::CleanupFacts),
+    PartialSetup(super::model::CleanupFacts),
+    Failed(super::model::FailureCode),
+}
+impl NativeOutcome {
+    pub const fn kind(&self) -> &'static str {
+        match self {
+            Self::Discovered(_) => "discovered",
+            Self::Probed(_) => "probed",
+            Self::Paired(_) => "tv_approved_and_saved",
+            Self::Saved(_) => "saved",
+            Self::RemoteReady => "remote_ready",
+            Self::Written => "written",
+            Self::Uncertain => "uncertain",
+            Self::NotSent(_) => "not_sent",
+            Self::Wake(_) => "wake",
+            Self::Forgotten(_) => "forgotten",
+            Self::PartialSetup(_) => "partial_setup",
+            Self::Failed(_) => "failed",
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
 pub struct NativeReceipt {
     pub id: OperationId,
     pub epoch: Epoch,
+    pub target: Option<DeviceId>,
+    pub generation: Option<u64>,
     pub terminal: bool,
-    pub result: Value,
+    pub outcome: Option<NativeOutcome>,
+    pub expires_at: Option<std::num::NonZeroU64>,
+    pub terminal_state: Option<TerminalState>,
 }
 impl NativeReceipt {
     pub fn parse(v: &Value, expected: Epoch) -> Result<Self, ClientError> {
@@ -258,94 +354,165 @@ impl NativeReceipt {
             "terminal" => true,
             _ => return Err(invalid()),
         };
-        if terminal {
-            std::num::NonZeroU64::new(count(v, "expires_at_unix_ms")?).ok_or_else(invalid)?;
-            if !matches!(
-                text(&v["result"], "kind")?,
-                "discovered"
-                    | "probed"
-                    | "tv_approved_and_saved"
-                    | "saved"
-                    | "remote_ready"
-                    | "written"
-                    | "uncertain"
-                    | "not_sent"
-                    | "wake"
-                    | "forgotten"
-                    | "partial_setup"
-                    | "failed"
-            ) {
+        let id = operation(v, "operation_id", epoch)?;
+        let target = optional_id(v, "device_id")?;
+        let generation = if v["selection_generation"].is_null() {
+            None
+        } else {
+            Some(count(v, "selection_generation")?)
+        };
+        let (outcome, expires_at, terminal_state) = if terminal {
+            let expires =
+                std::num::NonZeroU64::new(count(v, "expires_at_unix_ms")?).ok_or_else(invalid)?;
+            let state = &v["terminal_state"];
+            if !state.is_object() {
                 return Err(invalid());
             }
-        }
+            let terminal_state = TerminalState {
+                selected: optional_id(state, "selected")?,
+                generation: count(state, "selection_generation")?,
+                configuration_revision: if state["config_revision"].is_null() {
+                    None
+                } else {
+                    Some(count(state, "config_revision")?)
+                },
+            };
+            (
+                Some(parse_outcome(&v["result"], id, epoch)?),
+                Some(expires),
+                Some(terminal_state),
+            )
+        } else {
+            if !v["result"].is_null()
+                || !v["terminal_state"].is_null()
+                || !v["expires_at_unix_ms"].is_null()
+            {
+                return Err(invalid());
+            }
+            (None, None, None)
+        };
         Ok(Self {
-            id: operation(v, "operation_id", epoch)?,
+            id,
             epoch,
+            target,
+            generation,
             terminal,
-            result: v["result"].clone(),
+            outcome,
+            expires_at,
+            terminal_state,
         })
     }
     pub fn kind(&self) -> &str {
-        self.result["kind"].as_str().unwrap_or("pending")
+        self.outcome.as_ref().map_or("pending", NativeOutcome::kind)
+    }
+    pub fn failure(&self) -> Option<super::model::FailureCode> {
+        match self.outcome {
+            Some(NativeOutcome::Failed(code)) => Some(code),
+            _ => None,
+        }
     }
     pub fn observation(&self) -> Result<Observation, ClientError> {
-        let v = &self.result;
-        if !self.terminal
-            || self.kind() != "probed"
-            || operation(v, "observation_id", self.epoch)? != self.id
-            || operation(v, "attempt_id", self.epoch)? != self.id
-        {
-            return Err(invalid());
+        match &self.outcome {
+            Some(NativeOutcome::Probed(observed)) => Ok(*observed.clone()),
+            _ => Err(invalid()),
         }
-        let optional_text = |key| -> Result<Option<String>, ClientError> {
-            match &v[key] {
-                Value::Null => Ok(None),
-                Value::String(s) if s.len() <= 256 => Ok(Some(s.clone())),
-                _ => Err(invalid()),
-            }
-        };
-        let expiry =
-            std::num::NonZeroU64::new(count(v, "expires_at_unix_ms")?).ok_or_else(invalid)?;
-        Ok(Observation {
-            id: operation(v, "observation_id", self.epoch)?,
-            host: TvHost::parse(text(v, "host")?).map_err(|_| invalid())?,
-            observation: crate::application::tv_session::ProbeObservation {
-                pin: crate::application::certificate_trust::CertificatePin::from_hex(text(
-                    v,
-                    "fingerprint",
-                )?)
-                .ok_or_else(invalid)?,
-                name: optional_text("name")?,
-                model: optional_text("model")?,
-            },
-            expires_at: expiry,
-        })
     }
     pub fn candidates(&self) -> Result<Vec<Candidate>, ClientError> {
-        if !self.terminal || self.kind() != "discovered" {
-            return Err(invalid());
+        match &self.outcome {
+            Some(NativeOutcome::Discovered(candidates)) => Ok(candidates.clone()),
+            _ => Err(invalid()),
         }
-        self.result["candidates"]
-            .as_array()
-            .filter(|a| a.len() <= 32)
-            .ok_or_else(invalid)?
-            .iter()
-            .enumerate()
-            .map(|(index, v)| {
-                let id = wire::parse_candidate(text(v, "candidate_id")?, self.epoch, self.epoch)
-                    .map_err(|_| invalid())?;
-                if id.0 != self.id || usize::from(id.1) != index {
+    }
+}
+
+fn parse_outcome(v: &Value, id: OperationId, epoch: Epoch) -> Result<NativeOutcome, ClientError> {
+    use super::model::{CleanupFacts, FailureCode, NotSent};
+    Ok(match text(v, "kind")? {
+        "discovered" => {
+            let candidates = v["candidates"]
+                .as_array()
+                .filter(|a| a.len() <= 32)
+                .ok_or_else(invalid)?
+                .iter()
+                .enumerate()
+                .map(|(index, v)| {
+                    let candidate = wire::parse_candidate(text(v, "candidate_id")?, epoch, epoch)
+                        .map_err(|_| invalid())?;
+                    if candidate.0 != id || usize::from(candidate.1) != index {
+                        return Err(invalid());
+                    }
+                    Ok(Candidate {
+                        id: candidate,
+                        host: TvHost::parse(text(v, "host")?).map_err(|_| invalid())?,
+                        expires_at: std::num::NonZeroU64::new(count(v, "expires_at_unix_ms")?)
+                            .ok_or_else(invalid)?,
+                    })
+                })
+                .collect::<Result<Vec<_>, ClientError>>()?;
+            NativeOutcome::Discovered(candidates)
+        }
+        "probed" => {
+            if operation(v, "observation_id", epoch)? != id
+                || operation(v, "attempt_id", epoch)? != id
+            {
+                return Err(invalid());
+            }
+            let optional_text = |key| -> Result<Option<String>, ClientError> {
+                match &v[key] {
+                    Value::Null => Ok(None),
+                    Value::String(s) if s.len() <= 256 => Ok(Some(s.clone())),
+                    _ => Err(invalid()),
+                }
+            };
+            NativeOutcome::Probed(Box::new(Observation {
+                id,
+                host: TvHost::parse(text(v, "host")?).map_err(|_| invalid())?,
+                observation: crate::application::tv_session::ProbeObservation {
+                    pin: crate::application::certificate_trust::CertificatePin::from_hex(text(
+                        v,
+                        "fingerprint",
+                    )?)
+                    .ok_or_else(invalid)?,
+                    name: optional_text("name")?,
+                    model: optional_text("model")?,
+                },
+                expires_at: std::num::NonZeroU64::new(count(v, "expires_at_unix_ms")?)
+                    .ok_or_else(invalid)?,
+            }))
+        }
+        "tv_approved_and_saved" => NativeOutcome::Paired(id_from_result(v)?),
+        "saved" => NativeOutcome::Saved(id_from_result(v)?),
+        "remote_ready" => NativeOutcome::RemoteReady,
+        "written" => NativeOutcome::Written,
+        "uncertain" => NativeOutcome::Uncertain,
+        "not_sent" => NativeOutcome::NotSent(
+            serde_json::from_value::<NotSent>(v["reason"].clone()).map_err(|_| invalid())?,
+        ),
+        "wake" => NativeOutcome::Wake(wake(&v["facts"])?),
+        kind @ ("forgotten" | "partial_setup") => {
+            let facts = CleanupFacts {
+                credential_removed: flag(v, "credential_removed")?,
+                trust_removed: flag(v, "trust_removed")?,
+                record_removed: flag(v, "record_removed")?,
+            };
+            if facts.complete() != (kind == "forgotten") {
+                return Err(invalid());
+            }
+            if kind == "forgotten" {
+                NativeOutcome::Forgotten(facts)
+            } else {
+                if FailureCode::parse(text(&v["error"], "code")?)? != FailureCode::PartialSetup {
                     return Err(invalid());
                 }
-                Ok(Candidate {
-                    id,
-                    host: TvHost::parse(text(v, "host")?).map_err(|_| invalid())?,
-                    expires_at: std::num::NonZeroU64::new(count(v, "expires_at_unix_ms")?)
-                        .ok_or_else(invalid)?,
-                })
-            })
-            .collect()
-    }
+                NativeOutcome::PartialSetup(facts)
+            }
+        }
+        "failed" => NativeOutcome::Failed(FailureCode::parse(text(&v["error"], "code")?)?),
+        _ => return Err(invalid()),
+    })
+}
+fn id_from_result(v: &Value) -> Result<DeviceId, ClientError> {
+    id(v, "device_id")
 }
 
 pub fn encode(request: &Request) -> Result<(&'static str, String, Value), ClientError> {
@@ -380,9 +547,13 @@ pub fn encode(request: &Request) -> Result<(&'static str, String, Value), Client
             "/v1/selection".into(),
             json!({"device_id":wire::device(*target),"expected_generation":Counter(*generation)}),
         ),
-        Command::Connect { target, generation } => (
+        Command::Connect {
+            target,
+            generation,
+            only_if_idle,
+        } => (
             "/v1/connections".into(),
-            json!({"device_id":wire::device(*target),"selection_generation":Counter(*generation)}),
+            json!({"device_id":wire::device(*target),"selection_generation":Counter(*generation),"only_if_idle":only_if_idle}),
         ),
         Command::Remote(action) => (
             "/v1/remote-actions".into(),
@@ -446,4 +617,70 @@ pub fn encode(request: &Request) -> Result<(&'static str, String, Value), Client
         .expect("envelope")
         .extend(extra.as_object().expect("command").clone());
     Ok((method, route, body))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    fn state() -> Value {
+        let snapshot = Snapshot {
+            epoch: Epoch::from_u128(1),
+            revision: 0,
+            admission_closed: false,
+            startup: StartupState::Ready,
+            control: ControlState::none(),
+            devices: Arc::new(vec![]),
+            configuration_revisions: Arc::new(vec![]),
+            duplicate_records: false,
+            storage_pending: false,
+            recovery: None,
+            pairing_recovery: None,
+            wake: WakeStage::Idle,
+            wake_operation: None,
+            pairing_pending: false,
+        };
+        crate::server::control_http::response::snapshot(&snapshot)
+    }
+    #[test]
+    fn initial_private_references_are_bounded_unique_and_kind_checked() {
+        let mut state = state();
+        assert!(initial(&state).is_err());
+        state["recent_operations"] = json!([wire::operation(OperationId(7))]);
+        let (snapshot, references) = initial(&state).unwrap();
+        assert_eq!(snapshot.epoch, Epoch::from_u128(1));
+        assert_eq!(references, vec![OperationId(7)]);
+        for invalid in [
+            json!([
+                wire::operation(OperationId(7)),
+                wire::operation(OperationId(7))
+            ]),
+            json!([wire::device(DeviceId::new(1))]),
+            json!([wire::operation(OperationId(0))]),
+            json!((1..=65)
+                .map(|id| wire::operation(OperationId(id)))
+                .collect::<Vec<_>>()),
+        ] {
+            state["recent_operations"] = invalid;
+            assert!(initial(&state).is_err());
+        }
+    }
+    #[test]
+    fn operation_change_is_only_a_reference_and_requires_a_valid_phase() {
+        let mut state = state();
+        state["operation_id"] = json!(wire::operation(OperationId(2)));
+        for phase in ["pending", "terminal"] {
+            state["phase"] = json!(phase);
+            assert_eq!(
+                changed(&state, "operation_changed").unwrap().1,
+                Some(OperationId(2))
+            );
+        }
+        assert!(changed(&state, "state_changed").is_err());
+        state["phase"] = json!("written");
+        assert!(changed(&state, "operation_changed").is_err());
+        state["operation_id"] = Value::Null;
+        state["phase"] = Value::Null;
+        assert!(changed(&state, "operation_changed").is_err());
+        assert!(changed(&state, "state_changed").unwrap().1.is_none());
+    }
 }

@@ -1,4 +1,6 @@
-use super::private_files::{FileError, RuntimeDirectory, DEVELOPMENT_NAMESPACE};
+use super::private_files::{
+    FileError, Namespace, RuntimeDirectory, CONTROL_NAMESPACE, DEVELOPMENT_NAMESPACE,
+};
 use std::collections::HashMap;
 use std::fs::{self, File, OpenOptions};
 use std::io::{Read, Write};
@@ -54,8 +56,12 @@ struct DiskRecovery {
 impl LocalRecoveryJournal {
     /// Isolated profile storage uses a checked directory handle for every I/O.
     pub fn in_private_directory(directory: Arc<RuntimeDirectory>) -> Self {
+        Self::in_namespaced_directory(directory, Namespace::Development)
+    }
+
+    pub fn in_namespaced_directory(directory: Arc<RuntimeDirectory>, namespace: Namespace) -> Self {
         Self {
-            file: JsonFile::private(directory, "recovery.json"),
+            file: JsonFile::private(directory, "recovery.json", namespace),
         }
     }
 
@@ -213,15 +219,16 @@ impl RecoveryJournal for LocalRecoveryJournal {
 struct JsonFile {
     path: PathBuf,
     private: Option<Arc<RuntimeDirectory>>,
+    namespace: Namespace,
     lock: Mutex<()>,
 }
 
-/// Development documents deliberately cannot decode as production records,
+/// Namespaced documents deliberately cannot decode as legacy records,
 /// even after a directory rename or an individual file copy. The explicit
 /// envelope also prevents private adapters from importing untagged data.
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-struct DevelopmentDocument<T> {
+struct NamespacedDocument<T> {
     namespace: String,
     data: T,
 }
@@ -283,8 +290,12 @@ impl Default for DiskTrust {
 impl LocalDeviceRepository {
     /// Isolated profile storage uses a checked directory handle for every I/O.
     pub fn in_private_directory(directory: Arc<RuntimeDirectory>) -> Self {
+        Self::in_namespaced_directory(directory, Namespace::Development)
+    }
+
+    pub fn in_namespaced_directory(directory: Arc<RuntimeDirectory>, namespace: Namespace) -> Self {
         Self {
-            file: JsonFile::private(directory, "devices.json"),
+            file: JsonFile::private(directory, "devices.json", namespace),
         }
     }
 
@@ -298,8 +309,12 @@ impl LocalDeviceRepository {
 impl LocalCertificateTrustStore {
     /// Isolated profile storage uses a checked directory handle for every I/O.
     pub fn in_private_directory(directory: Arc<RuntimeDirectory>) -> Self {
+        Self::in_namespaced_directory(directory, Namespace::Development)
+    }
+
+    pub fn in_namespaced_directory(directory: Arc<RuntimeDirectory>, namespace: Namespace) -> Self {
         Self {
-            file: JsonFile::private(directory, "trust.json"),
+            file: JsonFile::private(directory, "trust.json", namespace),
         }
     }
 
@@ -519,20 +534,22 @@ impl JsonFile {
         Self {
             path,
             private: None,
+            namespace: Namespace::Development,
             lock: Mutex::new(()),
         }
     }
 
-    fn private(directory: Arc<RuntimeDirectory>, name: &str) -> Self {
+    fn private(directory: Arc<RuntimeDirectory>, name: &str, namespace: Namespace) -> Self {
         Self {
             path: PathBuf::from(name),
             private: Some(directory),
+            namespace,
             lock: Mutex::new(()),
         }
     }
     fn sibling(&self, name: &str) -> Result<Self, std::io::Error> {
         if let Some(directory) = &self.private {
-            return Ok(Self::private(directory.clone(), name));
+            return Ok(Self::private(directory.clone(), name, self.namespace));
         }
         Ok(Self::new(
             self.path
@@ -549,8 +566,9 @@ impl JsonFile {
     }
     fn legacy_allowed(&self) -> Result<(), std::io::Error> {
         let forbidden = |p: &Path| {
-            p.components()
-                .any(|v| v.as_os_str() == DEVELOPMENT_NAMESPACE)
+            p.components().any(|v| {
+                v.as_os_str() == DEVELOPMENT_NAMESPACE || v.as_os_str() == CONTROL_NAMESPACE
+            })
         };
         if forbidden(&self.path)
             || self
@@ -561,7 +579,7 @@ impl JsonFile {
         {
             return Err(std::io::Error::new(
                 std::io::ErrorKind::PermissionDenied,
-                "development profile requires isolated adapters",
+                "server profile requires isolated adapters",
             ));
         }
         Ok(())
@@ -589,14 +607,14 @@ impl JsonFile {
                 .read(self.name()?, MAX_FILE_BYTES as usize)
                 .map_err(private_error)?
                 .map(|bytes| {
-                    let document: DevelopmentDocument<T> =
+                    let document: NamespacedDocument<T> =
                         serde_json::from_slice(&bytes).map_err(|_| {
                             std::io::Error::new(std::io::ErrorKind::InvalidData, "invalid settings")
                         })?;
-                    if document.namespace != DEVELOPMENT_NAMESPACE {
+                    if document.namespace != self.namespace.name() {
                         return Err(std::io::Error::new(
                             std::io::ErrorKind::InvalidData,
-                            "wrong development namespace",
+                            "wrong profile namespace",
                         ));
                     }
                     Ok(document.data)
@@ -630,8 +648,8 @@ impl JsonFile {
 
     fn write<T: Serialize>(&self, value: &T) -> Result<(), std::io::Error> {
         if let Some(directory) = &self.private {
-            let bytes = serde_json::to_vec(&DevelopmentDocument {
-                namespace: DEVELOPMENT_NAMESPACE.into(),
+            let bytes = serde_json::to_vec(&NamespacedDocument {
+                namespace: self.namespace.name().into(),
                 data: value,
             })
             .map_err(|_| std::io::Error::other("settings encoding failed"))?;
@@ -696,6 +714,54 @@ fn private_error(error: FileError) -> std::io::Error {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn control_and_development_records_remain_distinct_after_copy_and_backup() {
+        let root = tempfile::tempdir().unwrap();
+        let root = root.path().canonicalize().unwrap();
+        for namespace in [Namespace::Development, Namespace::Control] {
+            let directory = Arc::new(RuntimeDirectory::open(&root.join(namespace.name())).unwrap());
+            let file = JsonFile::private(directory.clone(), "devices.json", namespace);
+            file.write(&serde_json::json!({"version":2,"devices":[],"selected":null}))
+                .unwrap();
+            let other = if namespace == Namespace::Control {
+                Namespace::Development
+            } else {
+                Namespace::Control
+            };
+            let copied = JsonFile::private(directory.clone(), "devices.json", other);
+            assert!(copied.read::<serde_json::Value>().is_err());
+            assert!(
+                LocalDeviceRepository::in_namespaced_directory(directory.clone(), namespace)
+                    .list()
+                    .unwrap()
+                    .is_empty()
+            );
+            // Pairing backup files inherit the selected envelope through sibling().
+            let backup = file.sibling("pairing-backup.json").unwrap();
+            backup.write(&serde_json::json!({"fixture":true})).unwrap();
+            let bytes = directory
+                .read("pairing-backup.json", 4096)
+                .unwrap()
+                .unwrap();
+            let value: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+            assert_eq!(value["namespace"], namespace.name());
+            directory
+                .replace(
+                    "devices.json",
+                    br#"{"version":2,"devices":[],"selected":null}"#,
+                )
+                .unwrap();
+            assert!(
+                LocalDeviceRepository::in_namespaced_directory(directory, namespace)
+                    .list()
+                    .is_err()
+            );
+            assert!(LocalDeviceRepository::new(&root.join(namespace.name()))
+                .list()
+                .is_err());
+        }
+    }
 
     #[test]
     fn device_and_trust_records_roundtrip_without_a_token_in_preferences() {

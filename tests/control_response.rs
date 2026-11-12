@@ -27,6 +27,13 @@ fn saved() -> SavedDevice {
     }
 }
 fn receipt(outcome: Option<Outcome>) -> Receipt {
+    let terminal_state = outcome.as_ref().map(|_| {
+        Box::new(TerminalState {
+            selected: Some(DeviceId::new(1)),
+            generation: 42,
+            configuration_revision: Some(9),
+        })
+    });
     Receipt {
         id: OperationId(1),
         metadata: OperationMetadata {
@@ -38,7 +45,7 @@ fn receipt(outcome: Option<Outcome>) -> Receipt {
             .as_ref()
             .map(|_| std::num::NonZeroU64::new(1234).unwrap()),
         outcome,
-        terminal_state: None,
+        terminal_state,
     }
 }
 
@@ -152,6 +159,23 @@ fn every_top_level_outcome_has_a_safe_terminal_representation() {
         assert_eq!(actual, status);
         assert_eq!(body["kind"], kind);
         assert!(!body.to_string().contains("synthetic-certificate"));
+        let (_, wire) = response::receipt(&receipt(Some(value)));
+        let decoded = samsung_tv_remote::control_client::projection::NativeReceipt::parse(
+            &wire,
+            Epoch::from_u128(7),
+        )
+        .unwrap();
+        assert_eq!(decoded.kind(), kind);
+        assert_eq!(decoded.target, Some(DeviceId::new(1)));
+        assert_eq!(decoded.generation, Some(u64::MAX));
+        assert_eq!(
+            decoded.terminal_state.unwrap(),
+            TerminalState {
+                selected: Some(DeviceId::new(1)),
+                generation: 42,
+                configuration_revision: Some(9)
+            }
+        );
     }
 }
 
@@ -189,6 +213,13 @@ fn nested_setup_session_policy_and_service_failures_have_explicit_codes() {
             Outcome::ProbeFailed(value),
         ] {
             assert_eq!(response::outcome(&outcome).1["error"]["code"], code);
+            let (_, encoded) = response::receipt(&receipt(Some(outcome)));
+            let decoded = samsung_tv_remote::control_client::projection::NativeReceipt::parse(
+                &encoded,
+                Epoch::from_u128(7),
+            )
+            .unwrap();
+            assert_eq!(decoded.failure().unwrap().as_str(), code);
         }
     }
     for (value, code) in [
@@ -322,6 +353,15 @@ fn wake_packet_facts_survive_cancellation_and_do_not_claim_physical_power() {
         assert_eq!(facts["packet"], packet);
         assert_eq!(facts["remote"], remote);
         assert!(facts.get("power").is_none());
+        let (_, encoded) = response::receipt(&receipt(Some(Outcome::Wake(stage))));
+        let decoded = samsung_tv_remote::control_client::projection::NativeReceipt::parse(
+            &encoded,
+            Epoch::from_u128(7),
+        )
+        .unwrap();
+        assert!(
+            matches!(decoded.outcome, Some(samsung_tv_remote::control_client::projection::NativeOutcome::Wake(value)) if value == stage)
+        );
     }
     for failure in [
         WakeFailure::Timeout,
@@ -339,6 +379,20 @@ fn wake_packet_facts_survive_cancellation_and_do_not_claim_physical_power() {
             "sent"
         );
         assert!(response::wake(WakeStage::Failed(failure))["failure"].is_string());
+        for stage in [
+            WakeStage::Failed(failure),
+            WakeStage::FailedAfterSend(failure),
+        ] {
+            let (_, encoded) = response::receipt(&receipt(Some(Outcome::Wake(stage))));
+            let decoded = samsung_tv_remote::control_client::projection::NativeReceipt::parse(
+                &encoded,
+                Epoch::from_u128(7),
+            )
+            .unwrap();
+            assert!(
+                matches!(decoded.outcome, Some(samsung_tv_remote::control_client::projection::NativeOutcome::Wake(value)) if value == stage)
+            );
+        }
     }
 }
 
@@ -433,20 +487,14 @@ fn native_setup_projections_reject_cross_operation_handles_and_oversized_metadat
     for field in ["attempt_id", "observation_id"] {
         let mut changed = value.clone();
         changed["result"][field] = serde_json::json!(wire::operation(OperationId(2)));
-        assert!(NativeReceipt::parse(&changed, epoch)
-            .unwrap()
-            .observation()
-            .is_err());
+        assert!(NativeReceipt::parse(&changed, epoch).is_err());
     }
     let mut invalid_expiry = value.clone();
     invalid_expiry["expires_at_unix_ms"] = serde_json::json!("0");
     assert!(NativeReceipt::parse(&invalid_expiry, epoch).is_err());
     let mut changed = value;
     changed["result"]["name"] = serde_json::json!("x".repeat(257));
-    assert!(NativeReceipt::parse(&changed, epoch)
-        .unwrap()
-        .observation()
-        .is_err());
+    assert!(NativeReceipt::parse(&changed, epoch).is_err());
     let (_, mut value) = response::receipt(&receipt(Some(Outcome::Discovered(vec![Candidate {
         id: CandidateId(OperationId(1), 0),
         host: TvHost::parse("synthetic-tv.invalid").unwrap(),
@@ -458,8 +506,85 @@ fn native_setup_projections_reject_cross_operation_handles_and_oversized_metadat
         .is_ok());
     value["result"]["candidates"][0]["candidate_id"] =
         serde_json::json!(wire::candidate(CandidateId(OperationId(2), 0)));
-    assert!(NativeReceipt::parse(&value, epoch)
-        .unwrap()
-        .candidates()
-        .is_err());
+    assert!(NativeReceipt::parse(&value, epoch).is_err());
+}
+
+#[test]
+fn typed_receipts_reject_unknown_facts_and_preserve_captured_preconditions() {
+    use samsung_tv_remote::control_client::{
+        model::{FailureCode, NotSent},
+        projection::{NativeOutcome, NativeReceipt},
+    };
+    use serde_json::json;
+    let epoch = Epoch::from_u128(7);
+    let (_, encoded) = response::receipt(&receipt(Some(Outcome::Rejected(
+        Rejection::StaleConfiguration,
+    ))));
+    let native = NativeReceipt::parse(&encoded, epoch).unwrap();
+    assert_eq!(native.failure(), Some(FailureCode::StaleConfig));
+    assert_eq!(
+        native.terminal_state.unwrap().configuration_revision,
+        Some(9)
+    );
+    for (field, value) in [
+        ("terminal_state", serde_json::Value::Null),
+        ("expires_at_unix_ms", json!("0")),
+        ("result", json!({"kind":"invented_success"})),
+    ] {
+        let mut malformed = encoded.clone();
+        malformed[field] = value;
+        assert!(NativeReceipt::parse(&malformed, epoch).is_err());
+    }
+    let mut malformed = encoded.clone();
+    malformed["result"]["error"]["code"] = json!("invented_failure");
+    assert!(NativeReceipt::parse(&malformed, epoch).is_err());
+    for (reason, expected) in [
+        (NotSentReason::Cancelled, NotSent::Cancelled),
+        (
+            NotSentReason::TransportUnavailable,
+            NotSent::TransportUnavailable,
+        ),
+        (
+            NotSentReason::Policy(RemoteActionRejection::NoSelectedTv),
+            NotSent::NoSelectedTv,
+        ),
+        (
+            NotSentReason::Policy(RemoteActionRejection::WrongTarget),
+            NotSent::StaleSelection,
+        ),
+        (
+            NotSentReason::Policy(RemoteActionRejection::StaleSelectionGeneration),
+            NotSent::StaleSelection,
+        ),
+        (
+            NotSentReason::Policy(RemoteActionRejection::PairingRequired),
+            NotSent::PairingRequired,
+        ),
+        (
+            NotSentReason::Policy(RemoteActionRejection::NotConnected),
+            NotSent::RemoteNotReady,
+        ),
+    ] {
+        let (_, encoded) = response::receipt(&receipt(Some(Outcome::Remote(
+            TerminalOutcome::NotSent(reason),
+        ))));
+        assert!(
+            matches!(NativeReceipt::parse(&encoded, epoch).unwrap().outcome, Some(NativeOutcome::NotSent(actual)) if actual == expected)
+        );
+    }
+    let (_, mut encoded) = response::receipt(&receipt(Some(Outcome::Wake(
+        WakeStage::CancelledDuringSend,
+    ))));
+    encoded["result"]["facts"]["packet"] = json!("not_sent");
+    assert!(NativeReceipt::parse(&encoded, epoch).is_err());
+    let (_, mut encoded) = response::receipt(&receipt(Some(Outcome::Forgotten(ForgetResult {
+        credential_removed: true,
+        trust_removed: true,
+        record_removed: true,
+    }))));
+    encoded["result"]["credential_removed"] = json!(false);
+    assert!(NativeReceipt::parse(&encoded, epoch).is_err());
+    let (_, pending) = response::receipt(&receipt(None));
+    let decoded = NativeReceipt::parse(&pending, epoch).unwrap();
+    assert!(!decoded.terminal && decoded.outcome.is_none() && decoded.terminal_state.is_none());
 }

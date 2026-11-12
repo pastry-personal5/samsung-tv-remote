@@ -99,6 +99,8 @@ pub enum Command {
     Connect {
         target: DeviceId,
         generation: u64,
+        /// Automatic launch Connect must not disturb a ready or busy owner.
+        only_if_idle: bool,
     },
     Forget {
         target: DeviceId,
@@ -210,7 +212,9 @@ impl Command {
     pub(crate) fn metadata(&self, epoch: Epoch) -> OperationMetadata {
         let (target, generation) = match self {
             Self::Select { target, generation }
-            | Self::Connect { target, generation }
+            | Self::Connect {
+                target, generation, ..
+            }
             | Self::SetWake {
                 target, generation, ..
             }

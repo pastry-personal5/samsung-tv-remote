@@ -145,7 +145,8 @@ async fn isolated_profile_restarts_with_synthetic_credentials_and_zero_startup_e
             "connect",
             Command::Connect {
                 target: saved.id,
-                generation: 0
+                generation: 0,
+                only_if_idle: false
             }
         )
         .await

@@ -1,5 +1,4 @@
 use super::view_model::PrimaryView;
-use crate::application::control_service::{Receipt, ServiceError, Snapshot};
 use crate::application::tv_address::TvHost;
 use crate::application::wake::WakeInterface;
 use crate::application::SendRemoteAction;
@@ -42,6 +41,7 @@ pub enum Message {
     WakeWifiChanged(String),
     WakeInterfaceSelected(WakeInterface),
     WakeInterfaceCleared,
+    ReloadWakeSettings,
     TvAddressChanged(String),
     DiscoverTv,
     UseCandidate(TvHost),
@@ -54,9 +54,11 @@ pub enum Message {
     ConnectSelected,
     ForgetSelected,
     SelectSaved(DeviceId),
-    RuntimeStarted(Arc<super::in_process::InProcess>),
     RemoteStarted(
-        Result<Arc<crate::control_client::background::Remote>, crate::server::launch::LaunchError>,
+        Result<
+            Arc<dyn crate::control_client::port::NativeClient>,
+            crate::control_client::port::ManagementError,
+        >,
     ),
     RemoteUpdate(crate::control_client::background::Update),
     RemoteAdmitted(
@@ -66,21 +68,18 @@ pub enum Message {
             crate::control_client::background::SubmitError,
         >,
     ),
-    RemoteResult(
-        Result<
-            crate::control_client::projection::NativeReceipt,
-            crate::control_client::http::ClientError,
-        >,
-    ),
-    ServiceSnapshot(Snapshot),
-    ServiceResnapshot(Snapshot),
-    ServiceResult(Receipt),
-    Admitted(u64, Result<Receipt, ServiceError>),
-    ServiceUnavailable,
-    Drained,
     ResumeServer,
     RestartServer,
-    RemoteManagementFinished(Result<(), crate::server::launch::LaunchError>),
+    RecheckServer,
+    RequestStopServer,
+    ConfirmStopServer,
+    CancelStopServer,
+    RemoteManagementFinished(
+        Result<
+            crate::control_client::port::ManagementReply,
+            crate::control_client::port::ManagementError,
+        >,
+    ),
     CaptureProbe,
     ProbeCaptured(window::Screenshot),
 }

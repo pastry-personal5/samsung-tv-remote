@@ -15,6 +15,9 @@ pub enum Blocked {
     BootstrapDenied,
     InteractionRequired,
     UnsafeMetadata,
+    StopUnconfirmed,
+    RecheckFailed,
+    SigningRequired,
 }
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum State {
@@ -106,5 +109,21 @@ impl Reconnect {
 
     pub fn exit(&mut self) {
         self.state = State::Exited;
+    }
+    /// One explicit read-only check. It cannot act as Resume or build restart,
+    /// and does not reset backoff or restore a prior/revoked authorization.
+    pub fn recheck(&mut self, now: Instant) -> bool {
+        if matches!(
+            self.state,
+            State::Exited
+                | State::Attaching { .. }
+                | State::Blocked(
+                    Blocked::Stopped | Blocked::IncompatibleBuild | Blocked::SigningRequired
+                )
+        ) {
+            return false;
+        }
+        self.state = State::Waiting { due: now };
+        true
     }
 }

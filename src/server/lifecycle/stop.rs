@@ -9,6 +9,7 @@ use tokio::task::JoinHandle;
 use super::files::{FileError, OwnershipLock, RuntimeDirectory};
 use crate::application::control_service::{ClientId, Epoch};
 use crate::application::runtime::Runtime;
+use crate::infrastructure::private_files::Namespace;
 use crate::server::access::AuthorizedClient;
 use crate::server::control_http::{
     response::{self, ErrorCode},
@@ -29,7 +30,8 @@ impl StopMarker {
     pub fn validate(&self) -> Result<(), FileError> {
         let key = uuid::Uuid::parse_str(&self.operation_key).map_err(|_| FileError::UnsafePath)?;
         if self.version != 1
-            || self.profile != "m8-fake-v1"
+            || ![Namespace::Development.name(), Namespace::Control.name()]
+                .contains(&self.profile.as_str())
             || self.identity != "gui"
             || wire::parse_epoch(&self.server_epoch).is_err()
             || key.hyphenated().to_string() != self.operation_key
@@ -49,24 +51,53 @@ pub trait StopStore: Send + Sync {
 pub struct FileStopStore(pub Arc<RuntimeDirectory>);
 impl StopStore for FileStopStore {
     fn read(&self) -> Result<Option<StopMarker>, FileError> {
-        let Some(bytes) = self.0.read("stopped.json", 4096)? else {
+        NamespacedStopStore::new(self.0.clone(), Namespace::Development).read()
+    }
+    fn write(&self, marker: &StopMarker) -> Result<(), FileError> {
+        NamespacedStopStore::new(self.0.clone(), Namespace::Development).write(marker)
+    }
+    fn clear(&self) -> Result<(), FileError> {
+        NamespacedStopStore::new(self.0.clone(), Namespace::Development).clear()
+    }
+}
+pub struct NamespacedStopStore {
+    directory: Arc<RuntimeDirectory>,
+    namespace: Namespace,
+}
+impl NamespacedStopStore {
+    pub fn new(directory: Arc<RuntimeDirectory>, namespace: Namespace) -> Self {
+        Self {
+            directory,
+            namespace,
+        }
+    }
+}
+impl StopStore for NamespacedStopStore {
+    fn read(&self) -> Result<Option<StopMarker>, FileError> {
+        let Some(bytes) = self.directory.read("stopped.json", 4096)? else {
             return Ok(None);
         };
         let marker: StopMarker =
             serde_json::from_slice(&bytes).map_err(|_| FileError::UnsafePath)?;
         marker.validate()?;
+        if marker.profile != self.namespace.name() {
+            return Err(FileError::UnsafePath);
+        }
         Ok(Some(marker))
     }
     fn write(&self, marker: &StopMarker) -> Result<(), FileError> {
         marker.validate()?;
-        self.0.replace(
+        if marker.profile != self.namespace.name() {
+            return Err(FileError::UnsafePath);
+        }
+        self.directory.replace(
             "stopped.json",
             &serde_json::to_vec(marker).map_err(|_| FileError::Unavailable)?,
         )
     }
     fn clear(&self) -> Result<(), FileError> {
         self.read()?;
-        self.0.remove("stopped.json")
+        self.directory.remove("stopped.json")
     }
 }
 
@@ -153,6 +184,14 @@ impl Lifecycle {
         store: Arc<dyn StopStore>,
         ownership: OwnershipLock,
     ) -> Result<Self, ErrorCode> {
+        Self::start_in_namespace(runtime, store, ownership, Namespace::Development).await
+    }
+    pub async fn start_in_namespace(
+        runtime: Runtime,
+        store: Arc<dyn StopStore>,
+        ownership: OwnershipLock,
+        namespace: Namespace,
+    ) -> Result<Self, ErrorCode> {
         let persisted = store.clone();
         let initial = tokio::task::spawn_blocking(move || persisted.read()).await;
         let failure = match initial {
@@ -211,7 +250,7 @@ impl Lifecycle {
                         let _ = state.0.send(State::Stopping);
                         let marker = StopMarker {
                             version: 1,
-                            profile: "m8-fake-v1".into(),
+                            profile: namespace.name().into(),
                             server_epoch: wire::epoch(epoch),
                             operation_key: key,
                             identity: "gui".into(),

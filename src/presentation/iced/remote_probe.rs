@@ -1,8 +1,8 @@
-//! Existing-window development composition. No local runtime or TV port exists.
+//! API client observation and outcomes. No local runtime or TV port exists.
 use super::*;
 use crate::control_client::{
     background::{Status, SubmitError, Update},
-    projection::NativeReceipt,
+    projection::{NativeOutcome, NativeReceipt},
     reconnect::Blocked,
 };
 impl App {
@@ -14,7 +14,11 @@ impl App {
                 "Control server is still connecting; the action was not submitted.",
             );
         };
-        if !remote.connected() || snapshot.admission_closed {
+        if self.remote_management
+            || self.awaiting_snapshot
+            || !remote.connected()
+            || snapshot.admission_closed
+        {
             return self.publish(
                 MessageSeverity::Warning,
                 MessageSource::MainWindow,
@@ -35,8 +39,9 @@ impl App {
             key: uuid::Uuid::new_v4().to_string(),
             command: command.clone(),
         };
-        self.submitting.insert(sequence, command);
         let remote = remote.clone();
+        self.capture_client_context(sequence, &command);
+        self.submitting.insert(sequence, command);
         Task::perform(
             async move { remote.submit(sequence, request).await },
             move |result| Message::RemoteAdmitted(sequence, result),
@@ -51,11 +56,17 @@ impl App {
                         .as_ref()
                         .is_some_and(|old| old.epoch != snapshot.epoch);
                 if initial {
-                    self.launch_connected = true;
-                    self.selection_connect_requested = false;
-                    self.wake_save_requested = false;
+                    self.awaiting_snapshot = false;
+                    self.stop_confirmation = None;
+                    if self.workflows.attached {
+                        self.launch_connected = true;
+                        self.workflows.cancel();
+                        self.wake_save_requested = false;
+                    }
+                    self.workflows.attached = true;
                 }
                 if replaced {
+                    self.reset_client_workflows();
                     self.pending.clear();
                     self.submitting.clear();
                     self.remote_tags.clear();
@@ -68,14 +79,22 @@ impl App {
                 }
             }
             Update::Status(status) => {
-                let available = matches!(status, Status::Connected)
-                    && self.snapshot.as_ref().is_some_and(|s| !s.admission_closed);
-                self.view_model.set_service_available(available);
+                if !matches!(
+                    status,
+                    Status::Connected | Status::Connecting | Status::Starting
+                ) {
+                    self.interrupt_client_flow();
+                }
                 let text = status_text(&status);
+                let ordinary = matches!(
+                    status,
+                    Status::Connected | Status::Connecting | Status::Starting
+                );
                 self.remote_status = Some(status);
+                self.refresh_client_controls();
                 self.settings_status = text.clone();
                 self.publish(
-                    if available {
+                    if ordinary {
                         MessageSeverity::Information
                     } else {
                         MessageSeverity::Warning
@@ -84,12 +103,60 @@ impl App {
                     text,
                 )
             }
-            Update::Operation(receipt) => self.remote_complete(receipt),
+            Update::History(receipt) => {
+                if self
+                    .snapshot
+                    .as_ref()
+                    .is_none_or(|state| state.epoch != receipt.epoch)
+                {
+                    return Task::none();
+                }
+                self.publish(
+                    MessageSeverity::Information,
+                    MessageSource::MainWindow,
+                    history_message(&receipt),
+                )
+            }
+            Update::HistoryUnavailable { epoch, .. }
+                if self
+                    .snapshot
+                    .as_ref()
+                    .is_none_or(|state| state.epoch != epoch) =>
+            {
+                Task::none()
+            }
+            Update::HistoryUnavailable { .. } => self.publish(
+                MessageSeverity::Warning,
+                MessageSource::MainWindow,
+                "An earlier operation's retained outcome is unavailable. No action was repeated.",
+            ),
             Update::Recovered { tag, receipt } => self.remote_admitted(tag, Ok(receipt)),
-            Update::Unknown { tag } => {
-                self.submitting.remove(&tag);
+            Update::Rejected { tag, code } => {
+                self.remote_admitted(tag, Err(SubmitError::NotAdmitted(code)))
+            }
+            Update::KnownBeforeRestart { tag, receipt } => {
+                self.end_client_context(tag, true);
+                let mut active = self.submitting.remove(&tag).is_some();
                 if let Some(id) = self.remote_tags.remove(&tag) {
-                    self.pending.remove(&id);
+                    active |= self.pending.remove(&id).is_some();
+                }
+                if !active {
+                    return Task::none();
+                }
+                self.publish(
+                    MessageSeverity::Information,
+                    MessageSource::MainWindow,
+                    history_message(&receipt),
+                )
+            }
+            Update::Unknown { tag, .. } => {
+                self.end_client_context(tag, true);
+                let mut active = self.submitting.remove(&tag).is_some();
+                if let Some(id) = self.remote_tags.remove(&tag) {
+                    active |= self.pending.remove(&id).is_some();
+                }
+                if !active {
+                    return Task::none();
                 }
                 self.publish(MessageSeverity::Warning,MessageSource::MainWindow,"The original outcome is unavailable or belongs to an earlier server lifetime. It will not be repeated.")
             }
@@ -102,13 +169,29 @@ impl App {
     ) -> Task<Message> {
         match result {
             Ok(receipt)=>{
-                let Some(command)=self.submitting.remove(&sequence) else{return Task::none();};
+                if !self.submitting.contains_key(&sequence) && self.remote_tags.get(&sequence) != Some(&receipt.id) {return Task::none();}
                 if self.snapshot.as_ref().is_none_or(|snapshot|snapshot.epoch!=receipt.epoch){return self.publish(MessageSeverity::Warning,MessageSource::MainWindow,"The server lifetime changed before the receipt arrived; no action will be repeated.");}
-                self.remote_tags.insert(sequence,receipt.id);self.pending.insert(receipt.id,command);
-                if receipt.terminal{self.remote_complete(receipt)}else{self.lookup(receipt.id)}
+                if let Some(command) = self.submitting.remove(&sequence) {
+                    self.remote_tags.insert(sequence, receipt.id);
+                    self.pending.insert(receipt.id, command);
+                } else if self.remote_tags.get(&sequence) != Some(&receipt.id) { return Task::none(); }
+                if receipt.terminal { self.remote_complete(receipt) } else { Task::none() }
             }
+            Err(SubmitError::Superseded) => Task::none(),
+            Err(SubmitError::Ambiguous) if !self.submitting.contains_key(&sequence) && !self.remote_tags.contains_key(&sequence) => Task::none(),
             Err(SubmitError::Ambiguous)=>self.publish(MessageSeverity::Warning,MessageSource::MainWindow,"The request reply was lost. Recovering its original result by lookup; it will not be submitted again."),
-            Err(_)=>{self.submitting.remove(&sequence);self.publish(MessageSeverity::Warning,MessageSource::MainWindow,"The request was not admitted. Review the current server and selection before another intent.")}
+            Err(_) if !self.submitting.contains_key(&sequence) && !self.remote_tags.contains_key(&sequence) => Task::none(),
+            Err(error)=>{
+                self.end_client_context(sequence,false);self.submitting.remove(&sequence);
+                let text=match error {
+                    SubmitError::NotAdmitted(code)=>workflows::failure_message(code),
+                    SubmitError::Unavailable=>"The server disconnected before submission. No TV request was made.",
+                    SubmitError::Busy=>"The client cannot track another request yet. No TV request was made.",
+                    SubmitError::Invalid=>"The request is invalid. No TV request was made.",
+                    SubmitError::Ambiguous|SubmitError::Superseded=>unreachable!("handled above"),
+                };
+                self.publish(MessageSeverity::Warning,MessageSource::MainWindow,text)
+            }
         }
     }
     pub(super) fn remote_complete(&mut self, receipt: NativeReceipt) -> Task<Message> {
@@ -123,78 +206,29 @@ impl App {
         let Some(command) = self.pending.remove(&receipt.id) else {
             return Task::none();
         };
+        let tag = self
+            .remote_tags
+            .iter()
+            .find_map(|(tag, id)| (*id == receipt.id).then_some(*tag));
+        let context = tag.and_then(|tag| self.take_client_context(tag));
         self.remote_tags.retain(|_, id| *id != receipt.id);
-        let(mut severity,text)=(MessageSeverity::Information,match receipt.kind(){
-            "discovered"=>match receipt.candidates(){Ok(candidates)=>{self.candidates=candidates.iter().map(|c|c.host.clone()).collect();self.candidate_handles=candidates;"Discovery finished. Check a TV before pairing."},Err(_)=>"The discovery result could not be projected; check the server connection."},
-            "probed"=>match receipt.observation(){Ok(observed)=>{if observed.host.as_str()==self.tv_address{self.observed=Some(observed);}"Review the identity and confirm Pairing."},Err(_)=>"The observation could not be projected. Check the server connection."},
-            "tv_approved_and_saved"=>{self.observed=None;"TV approved and saved in the isolated profile."},
-            "saved"=>{if matches!(command,Command::SetWake{..}){self.wake_save_requested=false;if self.snapshot.as_ref().and_then(|s|s.devices.iter().find(|d|Some(d.id)==s.control.selected_device())).is_some_and(|d|self.valid_wake_draft()==Some(d.wake)){self.wake_dirty=false;}}self.selection_connect_requested=false;"Saved settings committed. Connect explicitly if the TV session is not ready."},
-            "remote_ready"=>"The TV remote channel is ready.",
-            "written"=>"Remote action written to the simulated TV channel. Physical TV state is unobserved.",
-            "uncertain"=>"The action may have been sent. It will not be repeated automatically.",
-            "not_sent"=>"The remote action was not sent. Review the current connection before another intent.",
-            "wake"=>"Wake finished; packet and readiness facts are available in the latest server state.",
-            "forgotten"=>"Device cleanup completed.",
-            "partial_setup"=>"Cleanup is incomplete. Use the explicit recovery action after reviewing Settings.",
-            _=>match receipt.result["error"]["code"].as_str(){
-                Some("stale_selection"|"stale_config")=>"Selection or settings changed. Review the latest state before another intent.",
-                Some("observation_expired")=>{self.observed=None;"The observation expired or changed. Check the TV again before Pairing."},
-                Some("storage_uncertain"|"deadline"|"uncertain")=>"The outcome is uncertain. Wait for settlement and inspect the original result; it will not be repeated.",
-                _=>"The server rejected or failed the operation. Review the latest state and Settings before another intent.",
-            },
-        });
-        if matches!(
-            receipt.kind(),
-            "failed" | "partial_setup" | "uncertain" | "not_sent"
-        ) {
-            severity = MessageSeverity::Warning;
+        let follow = self.client_terminal(&command, context, &receipt);
+        let (severity, text) = workflows::outcome_message(&receipt);
+        if !self.workflows.conflict {
+            self.settings_status = text.clone();
         }
-        self.settings_status = text.into();
-        self.publish(severity, MessageSource::MainWindow, text)
-    }
-    pub(super) fn server_status_bar<'a>(
-        &'a self,
-        content: Element<'a, Message>,
-    ) -> Element<'a, Message> {
-        use ::iced::widget::{button, column, container, row, text, Space};
-        use ::iced::{Alignment, Length};
-        let status = self.remote_status.as_ref();
-        let mut line = row![
-            text(
-                status
-                    .map(status_text)
-                    .unwrap_or_else(|| "Connecting to isolated server…".into())
-            )
-            .size(13),
-            Space::new().width(Length::Fill)
-        ]
-        .spacing(8)
-        .align_y(Alignment::Center);
-        if matches!(status, Some(Status::Blocked(Blocked::Stopped))) {
-            line = line.push(
-                button("Resume server")
-                    .on_press_maybe((!self.remote_management).then_some(Message::ResumeServer)),
-            );
-        }
-        if matches!(status, Some(Status::Blocked(Blocked::IncompatibleBuild))) {
-            line = line.push(
-                button("Restart server")
-                    .on_press_maybe((!self.remote_management).then_some(Message::RestartServer)),
-            );
-        }
-        column![
-            container(line).padding([6, 12]).width(Length::Fill),
-            content
-        ]
-        .height(Length::Fill)
-        .into()
+        Task::batch([
+            follow,
+            self.publish(severity, MessageSource::MainWindow, text),
+        ])
     }
 }
-fn status_text(status: &Status) -> String {
+pub(super) fn status_text(status: &Status) -> String {
     match status {
-        Status::Connecting => "Connecting to isolated server…".into(),
+        Status::Connecting => "Attaching to control server…".into(),
+        Status::Starting => "Starting control server…".into(),
         Status::Connected => {
-            "Connected to isolated server. TV readiness is shown separately.".into()
+            "Connected to control server. TV readiness is shown separately.".into()
         }
         Status::Waiting { due } => {
             let delay = due.saturating_duration_since(tokio::time::Instant::now());
@@ -211,7 +245,7 @@ fn status_text(status: &Status) -> String {
             )
         }
         Status::Blocked(Blocked::Stopped) => {
-            "Server intentionally stopped. Resume explicitly to connect again.".into()
+            "A Stop marker is present. Resume explicitly after the previous owner settles.".into()
         }
         Status::Blocked(Blocked::IncompatibleBuild) => {
             "Server build is incompatible. Restart explicitly to use this build.".into()
@@ -225,6 +259,50 @@ fn status_text(status: &Status) -> String {
         Status::Blocked(Blocked::UnsafeMetadata) => {
             "Server metadata or wire state is unsafe. Resolve the profile before connecting.".into()
         }
+        Status::Blocked(Blocked::StopUnconfirmed) => {
+            "Stop durability and settlement are unconfirmed. Check server state explicitly.".into()
+        }
+        Status::Blocked(Blocked::SigningRequired) => {
+            "A signed application identity is required. Open the locally signed app bundle.".into()
+        }
+        Status::Blocked(Blocked::RecheckFailed) => {
+            "The explicit server check failed. Automatic attempts are paused.".into()
+        }
         Status::Exited => "Disconnected from control server.".into(),
+    }
+}
+
+// History has no originating local command. Report retained facts only: never
+// set confirmation handles, clear drafts or enter Select/save/Connect chains.
+fn history_message(receipt: &NativeReceipt) -> String {
+    match &receipt.outcome {
+        Some(NativeOutcome::Discovered(_)) => {
+            "An earlier discovery finished. Check a TV explicitly before Pairing.".into()
+        }
+        Some(NativeOutcome::Probed(_)) => {
+            "An earlier TV check finished. Check again to confirm Pairing in this window.".into()
+        }
+        Some(NativeOutcome::Paired(_)) => "An earlier Pairing was approved and saved.".into(),
+        Some(NativeOutcome::Saved(_)) => "An earlier settings change was saved.".into(),
+        Some(NativeOutcome::RemoteReady) => {
+            "An earlier connection became ready. Current readiness is shown separately.".into()
+        }
+        Some(NativeOutcome::Written) => {
+            "An earlier remote command was written. Physical TV state was not observed.".into()
+        }
+        Some(NativeOutcome::Uncertain) => {
+            "An earlier command may have been sent. It will not be repeated.".into()
+        }
+        Some(NativeOutcome::NotSent(_)) => "An earlier remote command was not sent.".into(),
+        Some(NativeOutcome::Wake(stage)) => format!("Earlier Wake: {}", wake_message(*stage)),
+        Some(NativeOutcome::Forgotten(_)) => "An earlier device cleanup completed.".into(),
+        Some(NativeOutcome::PartialSetup(_)) => {
+            "An earlier cleanup was incomplete. Review Settings before explicit recovery.".into()
+        }
+        Some(NativeOutcome::Failed(_)) => {
+            "An earlier operation failed. Review the current TV and Settings before another intent."
+                .into()
+        }
+        None => "An earlier operation is still pending.".into(),
     }
 }

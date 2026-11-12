@@ -33,13 +33,13 @@ impl From<wire::WireError> for RequestError {
 // Expand the envelope into each DTO so serde rejects duplicate and unknown
 // fields, including envelope fields. Flattened maps can discard duplicates.
 macro_rules! dto {
-    ($name:ident { $($field:ident: $ty:ty),* $(,)? }) => {
+    ($name:ident { $($(#[$attribute:meta])* $field:ident: $ty:ty),* $(,)? }) => {
         #[derive(Deserialize)]
         #[serde(deny_unknown_fields)]
         struct $name {
             server_epoch: String,
             operation_key: String,
-            $($field: $ty,)*
+            $($(#[$attribute])* $field: $ty,)*
         }
         impl $name {
             fn request(self, current: Epoch) -> Result<(Epoch, String, Self), RequestError> {
@@ -76,6 +76,12 @@ dto!(Selection {
 dto!(Selected {
     device_id: String,
     selection_generation: Counter
+});
+dto!(Connect {
+    device_id: String,
+    selection_generation: Counter,
+    #[serde(default)]
+    only_if_idle: bool,
 });
 dto!(Remote {
     device_id: String,
@@ -211,12 +217,23 @@ pub fn parse_mutation(
                 },
             )
         }
-        MutationRoute::Connect | MutationRoute::Wake | MutationRoute::CancelWake(_) => {
+        MutationRoute::Connect => {
+            let (e, k, v) = decode::<Connect>(body)?.request(current)?;
+            (
+                e,
+                k,
+                Command::Connect {
+                    target: wire::parse_device(&v.device_id)?,
+                    generation: v.selection_generation.0,
+                    only_if_idle: v.only_if_idle,
+                },
+            )
+        }
+        MutationRoute::Wake | MutationRoute::CancelWake(_) => {
             let (e, k, v) = decode::<Selected>(body)?.request(current)?;
             let target = wire::parse_device(&v.device_id)?;
             let generation = v.selection_generation.0;
             let command = match route {
-                MutationRoute::Connect => Command::Connect { target, generation },
                 MutationRoute::Wake => Command::Wake { target, generation },
                 MutationRoute::CancelWake(id) => Command::CancelWake {
                     operation: wire::parse_operation(id, e, current)?,

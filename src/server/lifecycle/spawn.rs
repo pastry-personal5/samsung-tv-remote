@@ -1,15 +1,31 @@
 //! macOS spawn passes only a lock and listener, with no credentials in argv,
 //! environment, output or inherited GUI descriptors.
 use super::{endpoint::EndpointError, files::OwnershipLock};
+use crate::infrastructure::private_files::Namespace;
 use std::net::TcpListener;
 use std::path::Path;
 
-#[cfg(target_os = "macos")]
 pub fn detached(
     executable: &Path,
     base: &Path,
     ownership: &OwnershipLock,
     listener: &TcpListener,
+) -> Result<StartupReport, EndpointError> {
+    detached_for(
+        executable,
+        base,
+        ownership,
+        listener,
+        Namespace::Development,
+    )
+}
+#[cfg(target_os = "macos")]
+pub fn detached_for(
+    executable: &Path,
+    base: &Path,
+    ownership: &OwnershipLock,
+    listener: &TcpListener,
+    namespace: Namespace,
 ) -> Result<StartupReport, EndpointError> {
     use std::ffi::CString;
     use std::os::{
@@ -17,13 +33,15 @@ pub fn detached(
         unix::ffi::OsStrExt,
     };
     let cstring = |bytes: &[u8]| CString::new(bytes).map_err(|_| EndpointError::Unavailable);
-    let arguments = [
+    let mut arguments = vec![
         cstring(executable.as_os_str().as_bytes())?,
         cstring(b"--server")?,
-        cstring(b"--fake-profile")?,
-        cstring(base.as_os_str().as_bytes())?,
-        cstring(b"--inherited-owner")?,
     ];
+    if namespace == Namespace::Development {
+        arguments.push(cstring(b"--fake-profile")?);
+        arguments.push(cstring(base.as_os_str().as_bytes())?);
+    }
+    arguments.push(cstring(b"--inherited-owner")?);
     let mut argv: Vec<_> = arguments
         .iter()
         .map(|v| v.as_ptr() as *mut libc::c_char)
@@ -147,11 +165,12 @@ pub fn detached(
     }
 }
 #[cfg(not(target_os = "macos"))]
-pub fn detached(
+pub fn detached_for(
     _executable: &Path,
     _base: &Path,
     _ownership: &OwnershipLock,
     _listener: &TcpListener,
+    _namespace: Namespace,
 ) -> Result<StartupReport, EndpointError> {
     Err(EndpointError::Unavailable)
 }

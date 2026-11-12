@@ -1838,6 +1838,136 @@ async fn generation_changes_cancel_late_pairing_and_connect_without_adopting_or_
 }
 
 #[tokio::test]
+async fn idle_launch_connect_cannot_replace_another_clients_ready_or_busy_work() {
+    for competing in ["ready", "connect", "pair", "wake"] {
+        let h = Harness::new().await;
+        let device = h.pair().await;
+        let state = h.state().await;
+        let generation = state["selection_generation"].clone();
+        if competing == "wake" {
+            h.mutate(1,"PUT",&format!("/v1/devices/{device}/wake"),json!({"device_id":device,"selection_generation":generation,"expected_config_revision":state["devices"][0]["config_revision"],"wired_mac":"02:00:00:00:00:01","active_interface":"Wired"})).await;
+        }
+        if competing != "ready" {
+            h.mutate(
+                1,
+                "POST",
+                "/v1/selection",
+                json!({"device_id":device,"expected_generation":generation}),
+            )
+            .await;
+        }
+        // This is the automatic client's observed idle selection. The other
+        // client starts work before its request reaches owner admission.
+        let observed = h.state().await;
+        let epoch = observed["server_epoch"].as_str().unwrap();
+        let generation = observed["selection_generation"].clone();
+        let mut pending_key = None;
+        if competing != "ready" {
+            let key = uuid::Uuid::new_v4().to_string();
+            let mut body = json!({"server_epoch":epoch,"operation_key":key,"device_id":device,"selection_generation":generation});
+            let path = match competing {
+                "pair" => {
+                    let (_, probe) = h
+                        .mutate(1, "POST", "/v1/probes", json!({"host":"tv.local"}))
+                        .await;
+                    let o = &probe["result"];
+                    body.as_object_mut().unwrap().extend(json!({"host":o["host"],"attempt_id":o["attempt_id"],"observation_id":o["observation_id"],"fingerprint":o["fingerprint"],"confirm_fingerprint":o["fingerprint"],"label":"Synthetic TV"}).as_object().unwrap().clone());
+                    h.effects.approval_wait.store(true, Ordering::SeqCst);
+                    "/v1/pairings"
+                }
+                "wake" => {
+                    h.effects.wake_wait.store(true, Ordering::SeqCst);
+                    "/v1/wakes"
+                }
+                _ => {
+                    h.effects.connect_wait.store(true, Ordering::SeqCst);
+                    "/v1/connections"
+                }
+            };
+            assert_eq!(h.json(1, "POST", path, body).await.0, 202);
+            if competing == "pair" {
+                wait_until(|| h.effects.pairs.load(Ordering::SeqCst) == 2).await;
+            } else if competing == "connect" {
+                wait_until(|| h.effects.connections.load(Ordering::SeqCst) == 2).await;
+            }
+            pending_key = Some(key);
+        }
+        let before = h.state().await;
+        let connections = h.effects.connections.load(Ordering::SeqCst);
+        let packets = h.effects.packets.load(Ordering::SeqCst);
+        let (key, result) = h
+            .mutate(
+                2,
+                "POST",
+                "/v1/connections",
+                json!({"device_id":device,"selection_generation":generation,"only_if_idle":true}),
+            )
+            .await;
+        assert_eq!(result["result"]["kind"], "failed", "{competing}: {result}");
+        assert_eq!(
+            result["result"]["error"]["code"], "busy",
+            "{competing}: {result}"
+        );
+        assert_eq!(h.terminal(2, epoch, &key).await, result);
+        let after = h.state().await;
+        assert_eq!(after["connection"], before["connection"], "{competing}");
+        assert_eq!(after["wake"], before["wake"], "{competing}");
+        assert_eq!(
+            after["pairing_pending"], before["pairing_pending"],
+            "{competing}"
+        );
+        assert_eq!(h.effects.connections.load(Ordering::SeqCst), connections);
+        assert_eq!(h.effects.packets.load(Ordering::SeqCst), packets);
+        h.effects.approval_release.notify_one();
+        h.effects.connect_release.notify_one();
+        h.effects.wake_release.notify_one();
+        if let Some(key) = pending_key {
+            let result = h.terminal(1, epoch, &key).await;
+            assert_ne!(result["result"]["kind"], "failed", "{competing}: {result}");
+        }
+        h.close().await;
+    }
+}
+
+#[tokio::test]
+async fn idle_launch_connect_starts_once_and_retains_its_success_after_becoming_ready() {
+    let h = Harness::new().await;
+    let device = h.pair().await;
+    let state = h.state().await;
+    h.mutate(
+        1,
+        "POST",
+        "/v1/selection",
+        json!({"device_id":device,"expected_generation":state["selection_generation"]}),
+    )
+    .await;
+    let observed = h.state().await;
+    assert_eq!(observed["connection"], "not_connected");
+    let key = uuid::Uuid::new_v4().to_string();
+    let body = json!({"server_epoch":observed["server_epoch"],"operation_key":key,"device_id":device,"selection_generation":observed["selection_generation"],"only_if_idle":true});
+    let connections = h.effects.connections.load(Ordering::SeqCst);
+    assert_eq!(
+        h.json(2, "POST", "/v1/connections", body.clone()).await.0,
+        202
+    );
+    let result = h
+        .terminal(2, observed["server_epoch"].as_str().unwrap(), &key)
+        .await;
+    assert_eq!(result["result"]["kind"], "remote_ready");
+    assert_eq!(h.state().await["connection"], "ready");
+    // The original operation remains identifiable after its precondition is
+    // false. Duplicate requests do not become new attempts or policy failures.
+    let (status, duplicate) = h.json(2, "POST", "/v1/connections", body).await;
+    assert_eq!(status, 200);
+    assert_eq!(duplicate, result);
+    assert_eq!(
+        h.effects.connections.load(Ordering::SeqCst),
+        connections + 1
+    );
+    h.close().await;
+}
+
+#[tokio::test]
 async fn wake_cancellation_over_http_preserves_packet_facts_and_drops_late_connections() {
     for stage in 0..4 {
         let h = Harness::new().await;

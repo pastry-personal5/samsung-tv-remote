@@ -633,6 +633,7 @@ async fn headless_session_pumps_remote_and_inference_without_gui_polling() {
             Command::Connect {
                 target: DeviceId::new(1),
                 generation: 0,
+                only_if_idle: false,
             },
         ))
         .await
@@ -995,6 +996,7 @@ async fn drain_retains_uncertain_writer_and_not_sent_waiters_without_replay() {
             Command::Connect {
                 target: DeviceId::new(1),
                 generation: 0,
+                only_if_idle: false,
             },
         ))
         .await
@@ -1679,6 +1681,7 @@ async fn prepared_connection_cannot_install_inside_an_uncommitted_selection_fenc
             Command::Connect {
                 target: DeviceId::new(1),
                 generation: 0,
+                only_if_idle: false,
             },
         ))
         .await
@@ -1745,6 +1748,7 @@ async fn cancelled_connection_during_configuration_commit_clears_connecting_proj
             Command::Connect {
                 target: DeviceId::new(1),
                 generation: 0,
+                only_if_idle: false,
             },
         ))
         .await
@@ -1795,6 +1799,7 @@ async fn connection_storage_deadline_clears_connecting_before_worker_returns() {
             Command::Connect {
                 target: DeviceId::new(1),
                 generation: 0,
+                only_if_idle: false,
             },
         ))
         .await
@@ -1939,6 +1944,7 @@ async fn connection_supervisor_failure_clears_connecting_projection() {
             Command::Connect {
                 target: DeviceId::new(1),
                 generation: 0,
+                only_if_idle: false,
             },
         ))
         .await

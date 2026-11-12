@@ -1,6 +1,6 @@
 //! Non-secret stable endpoint allocation, always under profile ownership.
 use super::files::{FileError, OwnershipLock, RuntimeDirectory};
-use crate::infrastructure::private_files::DEVELOPMENT_NAMESPACE;
+use crate::infrastructure::private_files::Namespace;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::fs::File;
@@ -21,13 +21,19 @@ pub struct Manifest {
 }
 impl Manifest {
     pub fn read(directory: &RuntimeDirectory) -> Result<Option<Self>, FileError> {
+        Self::read_for(directory, Namespace::Development)
+    }
+    pub fn read_for(
+        directory: &RuntimeDirectory,
+        namespace: Namespace,
+    ) -> Result<Option<Self>, FileError> {
         directory
             .read("endpoint.json", 4096)?
             .map(|bytes| {
                 let manifest: Self =
                     serde_json::from_slice(&bytes).map_err(|_| FileError::UnsafePath)?;
                 if manifest.version != 1
-                    || manifest.profile != DEVELOPMENT_NAMESPACE
+                    || manifest.profile != namespace.name()
                     || manifest.port < 1024
                     || manifest.url != format!("http://127.0.0.1:{}", manifest.port)
                     || manifest.mcp_url != format!("{}/mcp", manifest.url)
@@ -42,10 +48,18 @@ impl Manifest {
     }
     pub fn bind(
         directory: &RuntimeDirectory,
-        _ownership: &OwnershipLock,
+        ownership: &OwnershipLock,
         build: &str,
     ) -> Result<(Self, TcpListener), EndpointError> {
-        let previous = Self::read(directory).map_err(EndpointError::File)?;
+        Self::bind_for(directory, ownership, build, Namespace::Development)
+    }
+    pub fn bind_for(
+        directory: &RuntimeDirectory,
+        _ownership: &OwnershipLock,
+        build: &str,
+        namespace: Namespace,
+    ) -> Result<(Self, TcpListener), EndpointError> {
+        let previous = Self::read_for(directory, namespace).map_err(EndpointError::File)?;
         let listener = match previous {
             Some(ref previous) => TcpListener::bind((Ipv4Addr::LOCALHOST, previous.port))
                 .map_err(|_| EndpointError::Collision)?,
@@ -65,7 +79,7 @@ impl Manifest {
         let url = format!("http://127.0.0.1:{port}");
         let manifest = Self {
             version: 1,
-            profile: DEVELOPMENT_NAMESPACE.into(),
+            profile: namespace.name().into(),
             port,
             mcp_url: format!("{url}/mcp"),
             url,

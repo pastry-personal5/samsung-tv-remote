@@ -1,6 +1,6 @@
 use super::ui_message::Message;
 use super::view_model::RemoteControlViewState;
-use crate::application::tv_control_coordinator::WakeStage;
+use crate::control_client::model::WakeStage;
 use crate::{RemoteAction, SendRemoteAction};
 use iced::mouse;
 use iced::widget::{canvas, image, Canvas};

@@ -387,6 +387,7 @@ async fn late_approval_and_token_rotation_cannot_mutate_a_new_selection() {
             Command::Connect {
                 target: DeviceId::new(1),
                 generation: 0,
+                only_if_idle: false,
             }
         } else {
             let observation = probe(&h.service, "probe", host()).await;
@@ -446,6 +447,7 @@ async fn reconnect_rotation_is_journaled_and_preserves_selected_generation() {
         Command::Connect {
             target: DeviceId::new(1),
             generation: 0,
+            only_if_idle: false,
         },
     )
     .await;
@@ -579,7 +581,8 @@ async fn every_pairing_and_repair_commit_boundary_blocks_on_restart_and_recovers
                             "blocked",
                             Command::Connect {
                                 target,
-                                generation: 0
+                                generation: 0,
+                                only_if_idle: false
                             }
                         )
                         .await

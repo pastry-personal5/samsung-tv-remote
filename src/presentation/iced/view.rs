@@ -3,8 +3,8 @@ use super::remote_image::RemoteImage;
 use super::split_bar::SplitBar;
 use super::ui_message::{Message, SettingsPage};
 use super::view_model::{feed_is_at_bottom, PrimaryView, RemoteControlViewState, ViewModel};
-use crate::application::tv_control_coordinator::{WakeFailure, WakeStage};
 use crate::application::wake::WakeInterface;
+use crate::control_client::model::{WakeFailure, WakeStage};
 use crate::{RemoteAction, SendRemoteAction};
 use ::iced::alignment::Horizontal;
 use ::iced::widget::{
@@ -630,7 +630,11 @@ fn power_view(
     tick: bool,
     recovery: PowerRecovery,
 ) -> Element<'static, Message> {
-    let status = match stage {
+    let observing = control_state.service_available;
+    let status = if !observing {
+        "Server observation is unavailable. These are the last received Wake facts; the original outcome is waiting for recovery."
+    } else {
+        match stage {
         WakeStage::ConfigurationRequired => "Configure a wired or Wi-Fi MAC in TV Settings.",
         WakeStage::Idle => "Ready to send one wake packet.",
         WakeStage::CheckingConnection => "Checking the saved TV connection first…",
@@ -651,11 +655,13 @@ fn power_view(
         WakeStage::Cancelled => "Wake cancelled before a packet was sent.",
         WakeStage::CancelledDuringSend => "Wake cancelled. The packet may already have been sent.",
         WakeStage::CancelledAfterSend => "Reconnect cancelled. The sent packet cannot be recalled.",
+    }
     };
-    let active = matches!(
-        stage,
-        WakeStage::CheckingConnection | WakeStage::PacketSending | WakeStage::Reconnecting
-    );
+    let active = observing
+        && matches!(
+            stage,
+            WakeStage::CheckingConnection | WakeStage::PacketSending | WakeStage::Reconnecting
+        );
     let configured_text = if configured {
         "Configured"
     } else {
@@ -681,6 +687,16 @@ fn power_view(
         WakeStage::CancelledDuringSend => StepState::Failed,
         _ => StepState::Waiting,
     };
+    let packet_text = if !observing && stage == WakeStage::PacketSending {
+        "Last send observation; outcome unknown"
+    } else {
+        packet_text
+    };
+    let packet_step = if !observing && matches!(packet_step, StepState::Active) {
+        StepState::Waiting
+    } else {
+        packet_step
+    };
     let reconnect_text = match stage {
         WakeStage::CheckingConnection | WakeStage::Reconnecting => "In progress",
         WakeStage::Connected | WakeStage::Ready => "Complete",
@@ -700,7 +716,23 @@ fn power_view(
         | WakeStage::FailedAfterSend(_) => StepState::Failed,
         _ => StepState::Waiting,
     };
-    let ready_text = if matches!(stage, WakeStage::Connected | WakeStage::Ready) {
+    let reconnect_text = if !observing
+        && matches!(
+            stage,
+            WakeStage::CheckingConnection | WakeStage::Reconnecting
+        ) {
+        "Waiting for server outcome"
+    } else {
+        reconnect_text
+    };
+    let reconnect_step = if !observing && matches!(reconnect_step, StepState::Active) {
+        StepState::Waiting
+    } else {
+        reconnect_step
+    };
+    let ready_text = if !observing && matches!(stage, WakeStage::Connected | WakeStage::Ready) {
+        "Last ready observation"
+    } else if matches!(stage, WakeStage::Connected | WakeStage::Ready) {
         "Ready"
     } else {
         "Waiting"
@@ -1038,6 +1070,8 @@ pub struct SettingsView<'a> {
     pub wake_wired: &'a str,
     pub wake_wifi: &'a str,
     pub wake_active: Option<WakeInterface>,
+    pub wake_conflict: bool,
+    pub service_available: bool,
 }
 
 fn candidate_hosts(
@@ -1089,6 +1123,8 @@ pub fn settings_window(options: SettingsView<'_>) -> Element<'_, Message> {
         wake_wired,
         wake_wifi,
         wake_active,
+        wake_conflict,
+        service_available,
     } = options;
     let settings_item = |label, page| {
         button(
@@ -1136,7 +1172,9 @@ pub fn settings_window(options: SettingsView<'_>) -> Element<'_, Message> {
     if cleanup_required {
         selected_content = selected_content.push(
             button("Retry incomplete TV cleanup")
-                .on_press_maybe((!forget_pending).then_some(Message::ForgetSelected))
+                .on_press_maybe(
+                    (service_available && !forget_pending).then_some(Message::ForgetSelected),
+                )
                 .style(action_button_style),
         );
     }
@@ -1159,25 +1197,28 @@ pub fn settings_window(options: SettingsView<'_>) -> Element<'_, Message> {
                 row![
                     button("Check TV")
                         .on_press_maybe(
-                            (!pairing_pending && !forget_pending)
+                            (service_available && !pairing_pending && !forget_pending)
                                 .then(|| { Message::ProbeCandidate(device.host.clone()) })
                         )
                         .style(action_button_style),
                     button("Re-pair")
                         .on_press_maybe(
-                            (checked_row && !pairing_pending && !forget_pending)
+                            (checked_row
+                                && service_available
+                                && !pairing_pending
+                                && !forget_pending)
                                 .then_some(Message::ConfirmAndRepair)
                         )
                         .style(action_button_style),
                     button("Retry Connection")
                         .on_press_maybe(
-                            (!pairing_pending && !forget_pending)
+                            (service_available && !pairing_pending && !forget_pending)
                                 .then_some(Message::ConnectSelected)
                         )
                         .style(action_button_style),
                     button("Forget")
                         .on_press_maybe(
-                            (!pairing_pending && !forget_pending)
+                            (service_available && !pairing_pending && !forget_pending)
                                 .then_some(Message::ForgetSelected)
                         )
                         .style(action_button_style),
@@ -1205,8 +1246,12 @@ pub fn settings_window(options: SettingsView<'_>) -> Element<'_, Message> {
             };
             rows = rows.push(
                 row![
-                    container(saved_tv_radio(device.id, selected_id, !forget_pending))
-                        .width(Length::Fixed(48.0)),
+                    container(saved_tv_radio(
+                        device.id,
+                        selected_id,
+                        service_available && !forget_pending
+                    ))
+                    .width(Length::Fixed(48.0)),
                     container(text(&device.label)).width(Length::FillPortion(3)),
                     container(text(device.host.as_str())).width(Length::FillPortion(2)),
                     container(actions).width(Length::Fixed(440.0)),
@@ -1277,13 +1322,16 @@ pub fn settings_window(options: SettingsView<'_>) -> Element<'_, Message> {
                         row![
                             button("Check TV")
                                 .on_press_maybe(
-                                    (!pairing_pending && !forget_pending)
+                                    (service_available && !pairing_pending && !forget_pending)
                                         .then(|| { Message::ProbeCandidate(candidate.clone()) })
                                 )
                                 .style(action_button_style),
                             button("Pair")
                                 .on_press_maybe(
-                                    (checked_row && !pairing_pending && !forget_pending)
+                                    (checked_row
+                                        && service_available
+                                        && !pairing_pending
+                                        && !forget_pending)
                                         .then_some(Message::ConfirmAndPair)
                                 )
                                 .style(action_button_style),
@@ -1306,7 +1354,7 @@ pub fn settings_window(options: SettingsView<'_>) -> Element<'_, Message> {
     let mut pairing_content = column![
         text("Enter or discover the address of the intended TV.").size(13),
         button("Discover TVs")
-            .on_press(Message::DiscoverTv)
+            .on_press_maybe(service_available.then_some(Message::DiscoverTv))
             .style(action_button_style),
     ]
     .spacing(10);
@@ -1314,7 +1362,7 @@ pub fn settings_window(options: SettingsView<'_>) -> Element<'_, Message> {
         .push(
             text_input("Local IP address or host name", address)
                 .on_input(Message::TvAddressChanged)
-                .on_submit(Message::ProbeTv),
+                .on_submit_maybe(service_available.then_some(Message::ProbeTv)),
         )
             .push(text(fingerprint_text).size(12))
             .push(text("Check the intended TV, confirm its address and certificate, then approve the pairing prompt on the TV."));
@@ -1328,25 +1376,53 @@ pub fn settings_window(options: SettingsView<'_>) -> Element<'_, Message> {
                 "Wired",
                 WakeChoice::Wired,
                 WakeChoice::selected(wake_active),
-                wake_choice_enabled(WakeChoice::Wired, wake_wired, wake_wifi, forget_pending),
+                wake_choice_enabled(
+                    WakeChoice::Wired,
+                    wake_wired,
+                    wake_wifi,
+                    forget_pending || !service_available
+                ),
             ),
             wake_choice_radio(
                 "Wi-Fi",
                 WakeChoice::WiFi,
                 WakeChoice::selected(wake_active),
-                wake_choice_enabled(WakeChoice::WiFi, wake_wired, wake_wifi, forget_pending),
+                wake_choice_enabled(
+                    WakeChoice::WiFi,
+                    wake_wired,
+                    wake_wifi,
+                    forget_pending || !service_available
+                ),
             ),
             wake_choice_radio(
                 "Disabled",
                 WakeChoice::Disabled,
                 WakeChoice::selected(wake_active),
-                wake_choice_enabled(WakeChoice::Disabled, wake_wired, wake_wifi, forget_pending),
+                wake_choice_enabled(
+                    WakeChoice::Disabled,
+                    wake_wired,
+                    wake_wifi,
+                    forget_pending || !service_available
+                ),
             ),
         ]
         .spacing(8),
     ]
     .spacing(10);
 
+    let wake_guidance: Element<'_, Message> = if wake_conflict {
+        column![
+            text("Your unsaved Wake edits are retained. The selected TV or its settings changed."),
+            button("Discard draft and reload current settings").on_press_maybe(
+                (service_available && !forget_pending).then_some(Message::ReloadWakeSettings)
+            ),
+            text(status),
+        ]
+        .spacing(8)
+        .into()
+    } else {
+        text(status).into()
+    };
     let main_content: Element<'_, Message> = match settings_page {
         SettingsPage::Discovery => column![
             text("Discovery").size(26),
@@ -1359,7 +1435,7 @@ pub fn settings_window(options: SettingsView<'_>) -> Element<'_, Message> {
         SettingsPage::WakeOnLan => column![
             text("Wake on LAN").size(26),
             card("Wake Configuration", wake_content),
-            card("Guidance", text(status)),
+            card("Guidance", wake_guidance),
         ]
         .spacing(14)
         .into(),

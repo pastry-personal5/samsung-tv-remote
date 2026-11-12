@@ -477,3 +477,80 @@ async fn rotation_during_a_challenge_requires_a_fresh_exchange_while_revocation_
         assert_eq!(task.await.unwrap(), Err(BootstrapError::Denied));
     }
 }
+
+struct Unlockable {
+    locked: std::sync::atomic::AtomicBool,
+}
+impl ApiCredentials for Unlockable {
+    fn load(&self, role: Role) -> Result<[u8; 32], BootstrapError> {
+        if self.locked.load(std::sync::atomic::Ordering::SeqCst) {
+            Err(BootstrapError::InteractionRequired)
+        } else {
+            Secrets.load(role)
+        }
+    }
+}
+#[tokio::test]
+async fn initially_locked_role_enrolls_after_unlock_without_rotating_or_regranting_revocation() {
+    use std::sync::atomic::{AtomicBool, Ordering};
+    let store = Arc::new(Unlockable {
+        locked: AtomicBool::new(true),
+    });
+    let (server, gate) = server(peer(), store.clone());
+    let (mut client, mut socket) = UnixStream::pair().unwrap();
+    let blocked = server.clone();
+    let task = tokio::spawn(async move { blocked.exchange(&mut socket).await });
+    write_frame(&mut client, &hello(hex(&random().unwrap())))
+        .await
+        .unwrap();
+    assert_eq!(
+        task.await.unwrap(),
+        Err(BootstrapError::InteractionRequired)
+    );
+    assert!(!gate.is_current(ClientId(1), &[1; 32]));
+    store.locked.store(false, Ordering::SeqCst);
+    let (mut client, challenge, task) = challenge(server.clone(), hex(&random().unwrap())).await;
+    probe(&gate, &challenge, "/v1/ready").unwrap();
+    write_frame(
+        &mut client,
+        &ClientFrame::Redeem(Redeem {
+            challenge: challenge.challenge.clone(),
+            proof: proof(&challenge).unwrap(),
+        }),
+    )
+    .await
+    .unwrap();
+    assert!(matches!(
+        read_frame(&mut client, Duration::from_secs(2))
+            .await
+            .unwrap(),
+        ServerFrame::Credentials(_)
+    ));
+    task.await.unwrap().unwrap();
+    assert!(gate.is_current(ClientId(1), &[1; 32]));
+    gate.revoke(ClientId(1));
+    let (mut client, mut socket) = UnixStream::pair().unwrap();
+    let task = tokio::spawn(async move { server.exchange(&mut socket).await });
+    write_frame(&mut client, &hello(hex(&random().unwrap())))
+        .await
+        .unwrap();
+    assert_eq!(task.await.unwrap(), Err(BootstrapError::Denied));
+    assert!(!gate.is_current(ClientId(1), &[1; 32]));
+}
+#[tokio::test]
+async fn revoking_a_role_while_its_initial_store_is_blocked_prevents_later_enrollment() {
+    use std::sync::atomic::{AtomicBool, Ordering};
+    let store = Arc::new(Unlockable {
+        locked: AtomicBool::new(true),
+    });
+    let (server, gate) = server(peer(), store.clone());
+    gate.revoke(ClientId(1));
+    store.locked.store(false, Ordering::SeqCst);
+    let (mut client, mut socket) = UnixStream::pair().unwrap();
+    let task = tokio::spawn(async move { server.exchange(&mut socket).await });
+    write_frame(&mut client, &hello(hex(&random().unwrap())))
+        .await
+        .unwrap();
+    assert_eq!(task.await.unwrap(), Err(BootstrapError::Denied));
+    assert!(!gate.is_current(ClientId(1), &[1; 32]));
+}

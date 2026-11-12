@@ -170,9 +170,11 @@ impl Bootstrap {
     ) -> Result<Self, BootstrapError> {
         for role in [Role::Gui, Role::Mcp] {
             if let Ok(secret) = store.load(role) {
-                access
-                    .rotate(role.identity(), role.capability(), &secret)
-                    .map_err(|_| BootstrapError::Denied)?;
+                if !access.is_current(role.identity(), &secret) {
+                    access
+                        .enroll_initial(role.identity(), role.capability(), &secret)
+                        .map_err(|_| BootstrapError::Denied)?;
+                }
             }
         }
         Ok(Self {
@@ -249,7 +251,15 @@ impl Bootstrap {
         // Blocked credential stores are surfaced without prompts or HTTP grants.
         let secret = self.store.load(hello.role)?;
         if !self.access.is_current(hello.role.identity(), &secret) {
-            return Err(self.changed_authorization(hello.role));
+            // A role whose initial store read was blocked may enroll once after
+            // unlock. Atomic tombstones exclude rotation and revoked roles,
+            // including revocation while the initial read was still blocked.
+            let _ =
+                self.access
+                    .enroll_initial(hello.role.identity(), hello.role.capability(), &secret);
+            if !self.access.is_current(hello.role.identity(), &secret) {
+                return Err(self.changed_authorization(hello.role));
+            }
         }
         let challenge = Challenge {
             version: 1,

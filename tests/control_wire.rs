@@ -19,6 +19,58 @@ fn body(extra: Value) -> Vec<u8> {
 }
 
 #[test]
+fn idle_connect_flag_is_optional_strict_and_round_trips() {
+    let device = wire::device(DeviceId::new(1));
+    let base = json!({"device_id":device,"selection_generation":"0"});
+    let epoch = Epoch::from_u128(7);
+    let explicit = parse_mutation(MutationRoute::Connect, &body(base.clone()), epoch).unwrap();
+    assert!(matches!(
+        explicit.command,
+        Command::Connect {
+            only_if_idle: false,
+            ..
+        }
+    ));
+    let mut automatic = base;
+    automatic["only_if_idle"] = json!(true);
+    let request = parse_mutation(MutationRoute::Connect, &body(automatic.clone()), epoch).unwrap();
+    assert!(matches!(
+        request.command,
+        Command::Connect {
+            only_if_idle: true,
+            ..
+        }
+    ));
+    let (_, _, encoded) = samsung_tv_remote::control_client::projection::encode(&request).unwrap();
+    assert_eq!(
+        parse_mutation(
+            MutationRoute::Connect,
+            &serde_json::to_vec(&encoded).unwrap(),
+            epoch
+        )
+        .unwrap(),
+        request
+    );
+    for invalid in [Value::Null, json!("true"), json!(1)] {
+        automatic["only_if_idle"] = invalid;
+        assert_eq!(
+            parse_mutation(MutationRoute::Connect, &body(automatic.clone()), epoch),
+            Err(RequestError::InvalidRequest)
+        );
+    }
+    automatic["only_if_idle"] = json!(true);
+    for route in [
+        MutationRoute::Wake,
+        MutationRoute::CancelWake(&wire::operation(OperationId(1))),
+    ] {
+        assert_eq!(
+            parse_mutation(route, &body(automatic.clone()), epoch),
+            Err(RequestError::InvalidRequest)
+        );
+    }
+}
+
+#[test]
 fn identifiers_are_canonical_kind_checked_and_lossless() {
     let epoch = Epoch::from_u128(u128::MAX);
     assert_eq!(wire::parse_epoch(&wire::epoch(epoch)), Ok(epoch));

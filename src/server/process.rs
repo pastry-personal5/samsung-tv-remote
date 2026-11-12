@@ -1,18 +1,31 @@
-//! Same-executable headless composition. Only explicit M8 fake profiles enter.
+//! Same-executable headless composition. Only server mode constructs adapters.
 use super::launch::LaunchError;
+use crate::application::tv_control_coordinator::AppServices;
 use crate::application::{
     control_service::ClientId,
     runtime::{Runtime, RuntimeLimits},
 };
+use crate::infrastructure::{
+    macos::{
+        api_credentials::{bootstrap_error, ServerApiCredentials},
+        signed_peer::SignedPeer,
+    },
+    private_files::{Namespace, OwnershipLock, RuntimeDirectory},
+};
 use crate::server::{
     access::AccessGate,
-    bootstrap::{socket::Location, Bootstrap, Context, DevelopmentPeer, MemoryCredentials},
+    bootstrap::{
+        socket::Location, ApiCredentials, Bootstrap, Context, DevelopmentPeer, MemoryCredentials,
+        PeerVerifier,
+    },
     control_http::{transport::HttpAdapter, wire},
     development::DevelopmentProfile,
     lifecycle::{
         endpoint::{build_identity, Manifest},
-        stop::{settle_before_release, FileStopStore, Lifecycle, StopStore},
+        stop::{settle_before_release, Lifecycle, NamespacedStopStore, StopStore},
     },
+    production::ProductionProfile,
+    profile::Profile,
 };
 use std::fs::File;
 use std::net::TcpListener;
@@ -24,11 +37,24 @@ pub struct Inherited {
     pub listener: TcpListener,
     pub report: Option<File>,
 }
-pub async fn run(base: &Path, mut inherited: Option<Inherited>) -> Result<(), LaunchError> {
+pub async fn run(base: &Path, inherited: Option<Inherited>) -> Result<(), LaunchError> {
+    run_profile(
+        Profile::development(base).map_err(LaunchError::File)?,
+        inherited,
+    )
+    .await
+}
+pub async fn run_production(inherited: Option<Inherited>) -> Result<(), LaunchError> {
+    run_profile(Profile::Control, inherited).await
+}
+async fn run_profile(
+    profile: Profile,
+    mut inherited: Option<Inherited>,
+) -> Result<(), LaunchError> {
     let report = Arc::new(std::sync::Mutex::new(
         inherited.as_mut().and_then(|value| value.report.take()),
     ));
-    let result = run_inner(base, inherited, report.clone()).await;
+    let result = run_inner(&profile, inherited, report.clone()).await;
     if let Err(error) = result {
         report_startup(&report, error.code());
     }
@@ -41,20 +67,28 @@ fn report_startup(report: &Arc<std::sync::Mutex<Option<File>>>, text: &str) {
     }
 }
 async fn run_inner(
-    base: &Path,
+    selected: &Profile,
     inherited: Option<Inherited>,
     report: Arc<std::sync::Mutex<Option<File>>>,
 ) -> Result<(), LaunchError> {
-    if !base.is_absolute() {
-        return Err(LaunchError::UnsafeMetadata);
-    }
+    let namespace = selected.namespace();
+    // Both directions use the same signed requirement. Fail before opening a
+    // production profile, even when a caller supplies inherited descriptors.
+    let verifier: Arc<dyn PeerVerifier> = match namespace {
+        Namespace::Development => Arc::new(DevelopmentPeer {
+            uid: super::bootstrap::socket::uid(),
+        }),
+        Namespace::Control => Arc::new(
+            SignedPeer::for_current_executable().map_err(|_| LaunchError::SigningRequired)?,
+        ),
+    };
+    let base = selected.base().map_err(LaunchError::File)?;
     let build = build_identity(&std::env::current_exe().map_err(|_| LaunchError::Unavailable)?)
         .map_err(LaunchError::Endpoint)?;
     let (profile, ownership, listener) = match inherited {
         Some(inherited) => {
-            let (profile, ownership) =
-                DevelopmentProfile::inherited(base, inherited.owner).map_err(LaunchError::File)?;
-            let manifest = Manifest::read(&profile.directory)
+            let (profile, ownership) = OpenProfile::open(selected, Some(inherited.owner))?;
+            let manifest = Manifest::read_for(profile.directory(), namespace)
                 .map_err(LaunchError::File)?
                 .ok_or(LaunchError::UnsafeMetadata)?;
             if inherited
@@ -83,24 +117,28 @@ async fn run_inner(
             (profile, ownership, inherited.listener)
         }
         None => {
-            let (profile, ownership) = DevelopmentProfile::open(base).map_err(LaunchError::File)?;
-            if FileStopStore(profile.directory.clone())
+            let (profile, ownership) = OpenProfile::open(selected, None)?;
+            if NamespacedStopStore::new(profile.directory().clone(), namespace)
                 .read()
                 .map_err(LaunchError::File)?
                 .is_some()
             {
                 return Err(LaunchError::Stopped);
             }
-            let (_, listener) = Manifest::bind(&profile.directory, &ownership, &build)
-                .map_err(LaunchError::Endpoint)?;
+            let (_, listener) =
+                Manifest::bind_for(profile.directory(), &ownership, &build, namespace)
+                    .map_err(LaunchError::Endpoint)?;
             (profile, ownership, listener)
         }
     };
-    let store = Arc::new(FileStopStore(profile.directory.clone()));
+    let store = Arc::new(NamespacedStopStore::new(
+        profile.directory().clone(),
+        namespace,
+    ));
     if store.read().map_err(LaunchError::File)?.is_some() {
         return Err(LaunchError::Stopped);
     }
-    let location = Location::for_profile(base).map_err(LaunchError::Bootstrap)?;
+    let location = Location::for_namespace(&base, namespace).map_err(LaunchError::Bootstrap)?;
     let socket = location.bind().await.map_err(LaunchError::Bootstrap)?;
     let listener =
         tokio::net::TcpListener::from_std(listener).map_err(|_| LaunchError::Unavailable)?;
@@ -109,12 +147,20 @@ async fn run_inner(
         .map_err(|_| LaunchError::Unavailable)?
         .port();
     let access = Arc::new(AccessGate::new(port));
-    let credentials = Arc::new(MemoryCredentials::random().map_err(LaunchError::Bootstrap)?);
+    let credentials: Arc<dyn ApiCredentials> = match namespace {
+        Namespace::Development => {
+            Arc::new(MemoryCredentials::random().map_err(LaunchError::Bootstrap)?)
+        }
+        Namespace::Control => Arc::new(
+            ServerApiCredentials::new(profile.directory().clone())
+                .map_err(|error| LaunchError::Bootstrap(bootstrap_error(error)))?,
+        ),
+    };
     let mut term = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
         .map_err(|_| LaunchError::Unavailable)?;
     let mut interrupt = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::interrupt())
         .map_err(|_| LaunchError::Unavailable)?;
-    let runtime = Runtime::start(profile.services(), RuntimeLimits::default());
+    let runtime = Runtime::start(profile.services()?, RuntimeLimits::default());
     let services = [
         (ClientId(1), runtime.client(ClientId(1))),
         (ClientId(2), runtime.client(ClientId(2))),
@@ -129,9 +175,7 @@ async fn run_inner(
     let bootstrap = match Bootstrap::new(
         access.clone(),
         credentials,
-        Arc::new(DevelopmentPeer {
-            uid: super::bootstrap::socket::uid(),
-        }),
+        verifier,
         Context {
             profile: location.profile,
             endpoint: format!("http://127.0.0.1:{port}"),
@@ -146,7 +190,7 @@ async fn run_inner(
             return Err(LaunchError::Bootstrap(error));
         }
     };
-    let lifecycle = Lifecycle::start(runtime, store, ownership)
+    let lifecycle = Lifecycle::start_in_namespace(runtime, store, ownership, namespace)
         .await
         .map_err(|_| LaunchError::Unavailable)?;
     let http = Arc::new(HttpAdapter::new(
@@ -191,5 +235,51 @@ async fn run_inner(
         Err(LaunchError::Unavailable)
     } else {
         Ok(())
+    }
+}
+
+// Keep concrete production ports confined to server composition; callers see
+// no store/session handles, and fake profile selection cannot choose Control.
+enum OpenProfile {
+    Development(DevelopmentProfile),
+    Control(ProductionProfile),
+}
+impl OpenProfile {
+    fn open(
+        profile: &Profile,
+        inherited: Option<File>,
+    ) -> Result<(Self, OwnershipLock), LaunchError> {
+        match profile {
+            Profile::Development(base) => {
+                let (profile, owner) = match inherited {
+                    Some(file) => DevelopmentProfile::inherited(base, file),
+                    None => DevelopmentProfile::open(base),
+                }
+                .map_err(LaunchError::File)?;
+                Ok((Self::Development(profile), owner))
+            }
+            Profile::Control => {
+                let (profile, owner) = match inherited {
+                    Some(file) => ProductionProfile::inherited(file),
+                    None => ProductionProfile::open(),
+                }
+                .map_err(LaunchError::File)?;
+                Ok((Self::Control(profile), owner))
+            }
+        }
+    }
+    fn directory(&self) -> &Arc<RuntimeDirectory> {
+        match self {
+            Self::Development(profile) => &profile.directory,
+            Self::Control(profile) => &profile.directory,
+        }
+    }
+    fn services(&self) -> Result<AppServices, LaunchError> {
+        match self {
+            Self::Development(profile) => Ok(profile.services()),
+            Self::Control(profile) => profile
+                .services()
+                .map_err(|error| LaunchError::Bootstrap(bootstrap_error(error))),
+        }
     }
 }

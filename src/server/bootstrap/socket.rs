@@ -1,6 +1,6 @@
 //! Short owner-only Unix socket paths, derived from the entire isolated profile.
 use super::BootstrapError;
-use crate::infrastructure::private_files::{RuntimeDirectory, DEVELOPMENT_NAMESPACE};
+use crate::infrastructure::private_files::{Namespace, RuntimeDirectory};
 use sha2::{Digest, Sha256};
 use std::os::unix::{
     ffi::OsStrExt,
@@ -21,16 +21,27 @@ pub fn uid() -> u32 {
 }
 impl Location {
     pub fn for_profile(base: &Path) -> Result<Self, BootstrapError> {
+        Self::for_namespace(base, Namespace::Development)
+    }
+    pub fn for_namespace(base: &Path, namespace: Namespace) -> Result<Self, BootstrapError> {
         // Validate every component before canonicalizing for the binding hash.
-        RuntimeDirectory::open(&base.join(DEVELOPMENT_NAMESPACE))
+        RuntimeDirectory::open(&base.join(namespace.name()))
             .map_err(|_| BootstrapError::UnsafeMetadata)?;
         let canonical = base
-            .join(DEVELOPMENT_NAMESPACE)
+            .join(namespace.name())
             .canonicalize()
             .map_err(|_| BootstrapError::UnsafeMetadata)?;
         let hash: [u8; 32] = Sha256::digest(canonical.as_os_str().as_bytes()).into();
         let profile = super::hex(&hash);
-        let path = PathBuf::from(format!("/private/tmp/str-m8-{}-{}", uid(), &profile[..24]));
+        let prefix = match namespace {
+            Namespace::Development => "m8",
+            Namespace::Control => "control-v1",
+        };
+        let path = PathBuf::from(format!(
+            "/private/tmp/str-{prefix}-{}-{}",
+            uid(),
+            &profile[..24]
+        ));
         let directory =
             Arc::new(RuntimeDirectory::open(&path).map_err(|_| BootstrapError::UnsafeMetadata)?);
         Ok(Self {

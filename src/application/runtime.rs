@@ -563,7 +563,9 @@ impl Owner {
             Command::SetWake {
                 target, generation, ..
             }
-            | Command::Connect { target, generation }
+            | Command::Connect {
+                target, generation, ..
+            }
             | Command::Wake { target, generation }
             | Command::CancelWake {
                 target, generation, ..
@@ -719,15 +721,38 @@ impl Owner {
                     self.queue_remote(id, request);
                 }
             }
-            Command::Connect { target, generation } => self.start_connection(
-                id,
-                ConnectionContext {
-                    target,
-                    generation,
-                    mode: ConnectionMode::Connect,
-                    deadline: Instant::now() + Duration::from_secs(75),
-                },
-            ),
+            Command::Connect {
+                target,
+                generation,
+                only_if_idle,
+            } => {
+                // Owner admission and effect creation are one synchronous
+                // transition. A stale GUI snapshot never authorizes replacing
+                // a ready session or competing with another client's workflow.
+                if only_if_idle
+                    && (self.coordinator.app_state.connection_state()
+                        != super::ConnectionState::NotConnected
+                        || !self.connections.is_empty()
+                        || !self.wakes.is_empty()
+                        || !self.pairs.is_empty()
+                        || self.snapshot.pairing_pending
+                        || self.snapshot.storage_pending
+                        || self.snapshot.recovery.is_some()
+                        || self.snapshot.pairing_recovery.is_some())
+                {
+                    self.finish(id, Outcome::Rejected(Rejection::Busy));
+                    return;
+                }
+                self.start_connection(
+                    id,
+                    ConnectionContext {
+                        target,
+                        generation,
+                        mode: ConnectionMode::Connect,
+                        deadline: Instant::now() + Duration::from_secs(75),
+                    },
+                );
+            }
             Command::Discover => {
                 if self.workers.len() >= self.limits.effects.min(2) {
                     self.finish(id, Outcome::Rejected(Rejection::Busy));

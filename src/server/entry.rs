@@ -23,6 +23,10 @@ pub enum Mode {
     Probe {
         base: PathBuf,
     },
+    Production {
+        action: Action,
+        inherited: bool,
+    },
     Development {
         action: Action,
         base: PathBuf,
@@ -55,6 +59,14 @@ pub fn parse(arguments: &[OsString]) -> Result<Mode, LaunchError> {
         Some("--server-restart") => Action::Restart,
         _ => return Err(LaunchError::Denied),
     };
+    if arguments.len() == 1
+        || (arguments.len() == 2 && arguments[1] == "--inherited-owner" && action == Action::Server)
+    {
+        return Ok(Mode::Production {
+            action,
+            inherited: arguments.len() == 2,
+        });
+    }
     if !matches!(arguments.len(), 3 | 4) || arguments[1] != "--fake-profile" {
         return Err(LaunchError::Denied);
     }
@@ -72,7 +84,7 @@ pub fn parse(arguments: &[OsString]) -> Result<Mode, LaunchError> {
         inherited,
     })
 }
-/// None selects the unchanged GUI composition; development commands return
+/// None selects GUI composition; management commands return
 /// sanitized status only. API and pairing secrets are never printed.
 pub fn dispatch(arguments: &[OsString]) -> Option<i32> {
     let mode = match parse(arguments) {
@@ -100,16 +112,23 @@ pub fn dispatch(arguments: &[OsString]) -> Option<i32> {
         );
     }
     if mode == Mode::Help {
-        println!("Samsung TV Remote\nDefault: open GUI\nDevelopment: --server[|-start|-status|-stop|-resume|-restart] --fake-profile <absolute-existing-parent>\nGUI probe: --gui-probe --fake-profile <absolute-existing-parent>");
+        println!("Samsung TV Remote\nDefault: open GUI\nProduction server: --server[|-start|-status|-stop|-resume|-restart] (signed executable required)\nDevelopment: --server[|-start|-status|-stop|-resume|-restart] --fake-profile <absolute-existing-parent>\nGUI probe: --gui-probe --fake-profile <absolute-existing-parent>");
         return Some(0);
     }
-    let Mode::Development {
-        action,
-        base,
-        inherited,
-    } = mode
-    else {
-        unreachable!()
+    let (action, selected, inherited) = match mode {
+        Mode::Development {
+            action,
+            base,
+            inherited,
+        } => (
+            action,
+            super::profile::Profile::Development(base),
+            inherited,
+        ),
+        Mode::Production { action, inherited } => {
+            (action, super::profile::Profile::Control, inherited)
+        }
+        _ => unreachable!(),
     };
     let inherited = if inherited {
         match inherited_handles() {
@@ -132,21 +151,28 @@ pub fn dispatch(arguments: &[OsString]) -> Option<i32> {
     };
     let result = runtime.block_on(async {
         if action == Action::Server {
-            return super::process::run(&base, inherited).await.map(|()| None);
+            return match selected {
+                super::profile::Profile::Development(base) => {
+                    super::process::run(&base, inherited).await
+                }
+                super::profile::Profile::Control => super::process::run_production(inherited).await,
+            }
+            .map(|()| None);
         }
+        let launcher = launch::Launcher::new(selected)?;
         let executable = std::env::current_exe().map_err(|_| LaunchError::Unavailable)?;
         let client = match action {
-            Action::Start => launch::start(&executable, &base, Role::Gui).await?,
+            Action::Start => launcher.start(&executable, Role::Gui).await?,
             Action::Status => {
                 let build = super::lifecycle::endpoint::build_identity(&executable)
                     .map_err(LaunchError::Endpoint)?;
-                launch::attach(&base, Role::Gui, Some(&build)).await?
+                launcher.attach(Role::Gui, Some(&build)).await?
             }
-            Action::Resume => launch::resume(&executable, &base, Role::Gui).await?,
-            Action::Restart => launch::restart(&executable, &base, Role::Gui).await?,
+            Action::Resume => launcher.resume(&executable, Role::Gui).await?,
+            Action::Restart => launcher.restart(&executable, Role::Gui).await?,
             Action::Stop => {
-                let client = launch::attach(&base, Role::Gui, None).await?;
-                return launch::stop(&base, &client).await.map(Some);
+                let client = launcher.attach(Role::Gui, None).await?;
+                return launcher.stop(&client).await.map(Some);
             }
             Action::Server => unreachable!(),
         };

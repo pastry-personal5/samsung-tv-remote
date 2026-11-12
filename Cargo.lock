@@ -3624,6 +3624,7 @@ version = "1.0.0"
 dependencies = [
  "base64",
  "bytes",
+ "core-foundation 0.10.1",
  "futures-util",
  "getrandom 0.4.3",
  "hmac",
@@ -3631,8 +3632,10 @@ dependencies = [
  "hyper",
  "hyper-util",
  "iced",
+ "iced_runtime",
  "libc",
  "security-framework",
+ "security-framework-sys",
  "serde",
  "serde_json",
  "sha2",
