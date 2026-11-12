@@ -1,6 +1,7 @@
 # P2-M9 synthetic native fixture
 
-Status: Fixture self-checks pass; signed native acceptance has not run.
+Status: Fixture self-checks and partial signed same-Mac review pass; Wake and
+controlled-LAN permission acceptance remain open.
 This serves the real Samsung adapter's HTTPS metadata and secure WebSocket
 routes without a physical TV. It never contacts a TV, sends Wake packets,
 opens application profiles or accesses Keychain. The fixture's pairing token
@@ -97,6 +98,18 @@ cleanup is intended, then stop the fixture. Do not manually delete profile or
 Keychain items as cleanup.
 
 ## Automated fixture checks
+
+The signed same-Mac review on 2026-11-12 used the actual production server and
+fresh Keychain services. Manual Check matched the generated certificate;
+Pair/re-pair reported secure save, one remote action produced one fixture key
+event, and saved-profile restore after server restart reported readiness.
+The earlier Apple build also restored the new build's TV credential. Returning
+to the new build passed again; approved GUI Forget reported credential, trust
+and saved-record removal. The fixture was stopped.
+See the [acceptance audit](milestone-09-acceptance-audit.md#actual-application-access-and-fixture-review)
+and its sanitized screenshots. Hosting on the client's own private interface
+does not establish OS Local Network attribution, denial or recovery. No Wake
+packet or physical-TV behavior is inferred from this review.
 
 ```sh
 python3 -m unittest discover -s tests -p 'test_m9_tv_fixture.py' -v

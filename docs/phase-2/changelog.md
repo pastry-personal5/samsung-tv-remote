@@ -2,6 +2,27 @@
 
 Status: Active
 
+- 2026-11-12 — Continued M9 native acceptance with approved foreground access
+  and a candidate server switch. “Always Allow” let the standalone helper read
+  both existing API items, but the signed application still reported denied
+  access. Added an explicit foreground API reader in the actual executable,
+  reusing the fixed-role helper implementation and keeping routine startup and
+  recheck UI-off. All 328 package tests, formatting and Clippy pass; a preserved
+  Apple candidate passes inspection without Keychain calls. Explicit actual-app
+  approval subsequently recovered routine API access. Signed synthetic Pair,
+  re-pair, cross-build credential restore, GUI exit/reopen and Forget passed;
+  the test row was removed and the fixture stopped. The owner has only
+  this Mac available, so the separate controlled-LAN gate remains open. See
+  the [acceptance audit](milestone-09-acceptance-audit.md); M9 is incomplete.
+
+- 2026-11-12 — Tightened P2-M10 failure-path planning: ingress-to-semantic
+  capacity transfer, durable enrollment and crash ordering, fresh-bearer
+  regrant under stable identity, delayed-helper fencing and already-admitted
+  effect semantics. Clarified catalog versus HTTP caching, closed lookup
+  subscriptions and endpoint versus client verification. See the follow-up
+  [plan review](milestone-10-plan-review.md#follow-up-review-implementation-failure-paths).
+  M10 remains Planned; no predecessor acceptance or implementation is claimed.
+
 - 2026-11-12 — Re-reviewed P2-M10 against modern MCP/client documentation and
   the current M8/M9 boundaries. Made required metadata/result framing and
   protocol errors explicit; classified POST reads into shared query capacity

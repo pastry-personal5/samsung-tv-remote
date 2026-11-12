@@ -9,10 +9,7 @@ use crate::control_client::{
     reconnect::Blocked,
 };
 impl App {
-    pub(super) fn server_status_bar<'a>(
-        &'a self,
-        content: Element<'a, Message>,
-    ) -> Element<'a, Message> {
+    pub(super) fn server_settings_panel(&self) -> Element<'_, Message> {
         use ::iced::widget::{button, column, container, row, text};
         use ::iced::{Alignment, Length};
         let status = self.remote_status.as_ref();
@@ -66,7 +63,10 @@ impl App {
                 .on_press_maybe(enabled.then_some(Message::RecheckServer)),
             );
         }
-        let mut panel = column![line].spacing(6);
+        let mut panel = column![line].spacing(12);
+        if let Some(notice) = &self.server_notice {
+            panel = panel.push(text(notice).size(13));
+        }
         if self.remote_management {
             panel = panel
                 .push(text("Server management is pending. TV commands are disabled.").size(13));
@@ -90,12 +90,7 @@ impl App {
                 row![button("Cancel").on_press(Message::CancelStopServer),button("Stop for all clients").on_press_maybe(enabled.then_some(Message::ConfirmStopServer))].spacing(8),
             ].spacing(6));
         }
-        column![
-            container(panel).padding([6, 12]).width(Length::Fill),
-            content
-        ]
-        .height(Length::Fill)
-        .into()
+        container(panel).width(Length::Fill).into()
     }
     pub(super) fn refresh_client_controls(&mut self) {
         let available = !self.client_exited
@@ -145,7 +140,8 @@ impl App {
                         .as_ref()
                         .is_none_or(|state| state.epoch != epoch)
                 {
-                    return self.publish(MessageSeverity::Warning,MessageSource::MainWindow,"Server changed before Stop was confirmed. Review the current server before stopping it.");
+                    self.server_notice = Some("Server changed before Stop was confirmed. Review the current server before stopping it.".into());
+                    return Task::none();
                 }
                 ManagementIntent::Stop { epoch }
             }
@@ -183,6 +179,7 @@ impl App {
         self.remote_management = true;
         self.pending_management = Some(intent);
         self.management_error = None;
+        self.server_notice = None;
         if matches!(intent, ManagementIntent::Stop { .. }) {
             self.stop_result = None;
         } else {
@@ -239,13 +236,17 @@ impl App {
             }
         };
         self.refresh_client_controls();
-        let (severity,text)=match result {
-            Ok(ManagementReply::Stop(report))=>(MessageSeverity::Information,stop_text(report)),
-            Ok(ManagementReply::ReattachRequested)=>(MessageSeverity::Information,"Server attachment requested. Waiting for authenticated current state; no TV action was repeated.".into()),
-            Ok(ManagementReply::CredentialsRechecked)=>(MessageSeverity::Information,"Server access rechecked through the protected channel. No TV action was issued.".into()),
-            Err(error)=>(MessageSeverity::Warning,management_error_text(error).into()),
+        let text = match result {
+            Ok(ManagementReply::Stop(_)) | Err(_) => {
+                // Stop results and errors already have their own rows in the panel.
+                self.server_notice = None;
+                return Task::none();
+            }
+            Ok(ManagementReply::ReattachRequested) => "Server attachment requested. Waiting for authenticated current state; no TV action was repeated.".into(),
+            Ok(ManagementReply::CredentialsRechecked) => "Server access rechecked through the protected channel. No TV action was issued.".into(),
         };
-        self.publish(severity, MessageSource::MainWindow, text)
+        self.server_notice = Some(text);
+        Task::none()
     }
 }
 pub(super) fn stop_text(report: crate::control_client::port::StopReport) -> String {

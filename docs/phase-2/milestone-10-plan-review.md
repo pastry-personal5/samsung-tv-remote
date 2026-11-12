@@ -7,7 +7,7 @@ service queries, wire decoders and executable documentation fixtures, M6's
 corpus budgets, and M9's implemented but unaccepted signed production cutover.
 Re-reviewed the transport and client contracts against primary documentation
 and the current service/access/bootstrap code. No predecessor exception is
-granted. Existing M9 working-tree edits are outside this review.
+granted. This pass changes only M10 planning and the phase decision log.
 
 ## Findings and corrections
 
@@ -29,6 +29,26 @@ granted. Existing M9 working-tree edits are outside this review.
 | Medium | “Private” could imply isolation between Claude conversations, although bootstrap provisions one MCP role identity. | Document shared MCP quotas/lookup scope, reuse current credentials on helper reconnect and test simultaneous sessions. |
 | Medium | A bounded summary promised a detail path without assigning it to any of the 15 tools. | Assign saved-target detail to `inspect_tv` and paginated discovery/probe/cleanup facts to `get_operation`, without rerunning effects or extending handle expiry. |
 | Medium | Delivery required seven workflows, but the reconciled corpus contains nine and still does not cover every tool/recovery variant. | Require all nine scenarios in both search modes plus all-15-tool parity and explicit recovery/cancellation cases. Identify signed versus fake ports in evidence. |
+
+## Follow-up review: implementation failure paths
+
+A further review of `control_http/transport.rs`, `access/mod.rs`,
+`bootstrap/mod.rs` and `application/control_service.rs` found these remaining
+planning gaps. The overview and architecture now include the corrections.
+
+| Priority | Finding | Plan correction |
+| --- | --- | --- |
+| High | A parsing reservation was required without specifying its transition into semantic pools; retaining ordinary capacity while waiting for classification could starve POST recovery reads or deadlock permit transfers. | Require one aggregate accounting model, bounded classification capacity, atomic release/transfer and mutation-saturation/slow-body evidence before route integration. Numeric allocation remains a slice-1 decision. |
+| High | Persistent revocation was assigned but its crash ordering and existing-profile initialization were unspecified. Bootstrap currently enrolls loaded role credentials; refresh rotates them. | Define durable enrollment independently of Keychain presence. Disable before config removal, fence concurrent grants, honor disabled state at every startup/refresh path and inject crashes at each transition. |
+| High | Explicit reconnect could reuse a revoked bearer, restoring access to an old client; a delayed helper could race a new enrollment. | Regrant with a fresh bearer under the same principal, preserve retained operation ownership/deduplication, and fence old helpers by enrollment generation. |
+| Medium | Disconnect could imply cancellation of admitted work or affect only one conversation. | State that every MCP session loses new access while already admitted effects continue; recover results after explicit re-enrollment within normal retention. |
+| Medium | Server-side cache invalidation sounded sufficient to remove stale installed definitions. | Partition catalog caching by build/authorization, validate every invocation independently and prohibit HTTP intermediary caching of authenticated exchanges. |
+| Medium | Lookup waiting did not specify event-channel closure or validation before subscription allocation. | Validate selectors first; perform final private lookup on closure and bound resubscription by the original deadline/capacity. Add backlog/owner-shutdown cases. |
+| Medium | Endpoint verification could be presented as proof that Claude loaded a new config entry. | Separate configuration saved, authenticated endpoint probe and actual client attachment; saved-but-unverified is recoverable without Resume or reinstall. |
+
+These are implementation requirements, not evidence of implemented enrollment,
+permit transfer or installed client behavior. The selected protocol revision,
+15-tool scope and predecessor gates remain unchanged.
 
 ## Remaining decisions before implementation
 
@@ -65,10 +85,10 @@ Primary documentation checked on 2026-11-12:
   explains why the plan must test client replay behavior, rather than treating
   annotations solely as UI descriptions.
 
-## Validation and delivery status
+## Earlier review validation
 
-Changes in this review are planning documents only. Delegated validation
-passed for this pass:
+The earlier review recorded the following delegated validation. These figures
+are historical; follow-up validation is recorded separately below:
 
 - `cargo test --test control_documentation` — all three tests passed.
 - `python3 scripts/measure_mcp_corpus.py --wire-fixtures` — valid fixtures.
@@ -86,3 +106,19 @@ part of this review or its validation judgment.
 No MCP adapter, real configuration write, signed bundle, TV workflow or actual
 model-token result is claimed. M10 remains Planned. At implementation completion,
 write the separate `milestone-10-review.md` required by the architecture.
+
+## Follow-up validation
+
+Delegated documentation validation passed:
+
+- `cargo test --test control_documentation` — three tests passed.
+- `python3 scripts/measure_mcp_corpus.py --wire-fixtures` — valid fixtures.
+- `python3 scripts/measure_mcp_corpus.py` — nine scenarios and 15 tools;
+  documented proxy overruns remain open.
+- `git diff --check` — clean.
+- Local Markdown link/anchor check — four reviewed files, no broken targets.
+
+No source, corpus schema, client configuration or signed artifact was changed
+by this review. Concurrent Makefile edits are outside its scope. Full Cargo
+checks were not run and remain required before a PR; this review does not
+accept M10 delivery.

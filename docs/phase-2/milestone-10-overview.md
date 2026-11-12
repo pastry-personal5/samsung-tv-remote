@@ -70,7 +70,10 @@ service, login registration or Claude Desktop integration is included.
 - [ ] HTTP and MCP share the existing connection/request/subscriber limits.
   POST reads use reserved query capacity; bounded lookup waits leave immediate
   recovery capacity available. Mixed-client saturation and disconnect tests
-  prove reservations are released and no mutation bypasses admission.
+  prove reservations are released and no mutation bypasses admission. Freeze
+  ingress-to-semantic permit accounting so mutation saturation cannot prevent
+  a recovery read from reaching classification; no nested-pool deadlock or
+  additional request allowance is permitted.
 - [ ] Every supported TV operation reaches the same application service used
   by `/v1`; no tool opens a TV socket or bypasses selection, Pairing, or the
   bounded dispatcher.
@@ -115,10 +118,14 @@ service, login registration or Claude Desktop integration is included.
   retry after header refresh. Concurrent helpers reuse the current credential
   and MCP identity. Multiple Claude sessions share that identity's quotas and
   private lookup scope; conversation isolation is not claimed.
-- [ ] Connect reports configuration saved and endpoint verified separately.
+- [ ] Connect reports configuration saved and endpoint verified separately;
+  attachment by the actual client has separate evidence.
   Disconnect removes only the unchanged app entry and revokes MCP access;
-  restart/recheck/helper execution cannot silently restore it. Partial
-  installation/removal, writer conflicts and app relocation have tested repair
+  restart/recheck/helper execution cannot silently restore it. Durable disable
+  fences concurrent grants before entry removal; crash/restart and explicit
+  regrant tests prove old bearers stay invalid under the same MCP identity.
+  Disconnect affects all MCP sessions and preserves already admitted effects.
+  Partial installation/removal, writer conflicts and app relocation have tested repair
   paths. GUI control stays usable.
 - [ ] Protocol tests and a Claude Code smoke test cover `tools/list`, one
   read tool, and one mutating tool against a fake TV through the installed

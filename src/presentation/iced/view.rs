@@ -1057,6 +1057,7 @@ fn global_messages(view_model: &ViewModel) -> Element<'_, Message> {
 
 pub struct SettingsView<'a> {
     pub settings_page: SettingsPage,
+    pub server_panel: Element<'a, Message>,
     pub address: &'a str,
     pub candidates: &'a [crate::application::tv_address::TvHost],
     pub saved_devices: &'a [crate::application::device_repository::SavedDevice],
@@ -1110,6 +1111,7 @@ fn observed_matches(
 pub fn settings_window(options: SettingsView<'_>) -> Element<'_, Message> {
     let SettingsView {
         settings_page,
+        server_panel,
         address,
         candidates,
         saved_devices,
@@ -1159,6 +1161,7 @@ pub fn settings_window(options: SettingsView<'_>) -> Element<'_, Message> {
             .align_y(Alignment::Center),
             settings_item("Discovery", SettingsPage::Discovery),
             settings_item("Wake on LAN", SettingsPage::WakeOnLan),
+            settings_item("Servers", SettingsPage::Servers),
         ]
         .spacing(0)
         .width(Length::Fill),
@@ -1432,6 +1435,12 @@ pub fn settings_window(options: SettingsView<'_>) -> Element<'_, Message> {
             card("TV List", selected_content),
             card("Discovery and Pairing", pairing_content),
             card("Guidance", text(status)),
+        ]
+        .spacing(14)
+        .into(),
+        SettingsPage::Servers => column![
+            text("Servers").size(26),
+            card("Control Server", server_panel),
         ]
         .spacing(14)
         .into(),

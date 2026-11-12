@@ -425,12 +425,45 @@ success on disposable items does not satisfy the live-profile update gate.
 
 ## Remaining acceptance tooling
 
+The owner subsequently approved foreground access and a candidate server/GUI
+switch. The standalone helper read both existing API roles after “Always
+Allow,” but the candidate still failed routine attachment. A native screenshot
+now records the actual signed GUI's blocked state. The ordinary bundle's
+on-disk hash also differs from the earlier original manifest and its Status
+was already denied before owner shutdown. See the updated
+[acceptance audit](milestone-09-acceptance-audit.md#approved-follow-up-2026-11-12)
+for the observations; the old unchanged-executable rollback claim must not be
+carried forward to this session.
+
+The follow-up foreground reader is shared between the standalone example and
+the application's explicit `--server-api-access --inspect|--request-access`
+mode. This permits approval of the actual executable path. It requires Apple
+signing, dispatches before any runtime/profile/GUI construction, reads only
+existing API roles and performs no credential creation, replacement or deletion.
+Ordinary startup/recheck remains UI-off. Inspection alone and a foreground read
+do not prove subsequent routine access. The owner has only this Mac available;
+the separate controlled-LAN gate remains unsatisfied.
+
+The actual-app request subsequently passed after explicit owner approval.
+Routine Start authenticated the older Apple owner and correctly returned
+`incompatible_build`; explicit Restart switched to the new build with
+`serving/ready`. Signed GUI exit/reopen preserved server lifetime. A same-Mac
+TLS fixture passed manual certificate Check, first Pair, one remote receipt at
+the fixture, re-pair, saved-profile restore, and restore in the earlier Apple
+build. Returning to the new build passed again. Approved GUI Forget reported
+credential/trust/record removal, the fixture exited, and the new server remains
+serving with an empty fresh profile and existing API values intact. See the
+audit's screenshots and exact limitations. All 328 package tests, formatting,
+Clippy and example compilation pass; full signed parity, Wake, remaining native
+blocked-store cases, controlled-LAN review and final committed release evidence
+still prevent M9 Done.
+
 The [acceptance audit](milestone-09-acceptance-audit.md) maps all twelve overview
 checklist items to current source/test/native evidence and their unproven
-parts. It is not a completion review. Read-only revalidation still finds the
+parts. It is not a completion review. Earlier read-only revalidation found the
 original GUI/server alive and serving/ready, with unchanged bundle, handoff
-and legacy hashes. CUA inventory reports the app running but exact-path
-window inspection still returns `cgWindowNotFound`; no restart follows from
+and legacy hashes. At that time, CUA inventory reported the app running but exact-path
+window inspection returned `cgWindowNotFound`; no restart follows from
 that observation failure.
 
 The audit identified a missing real-adapter synthetic TV workflow. The new
@@ -448,5 +481,5 @@ Pairing/reconnect, denial, key/Ping/Close, malformed frames/headers and
 offline/recovery with redacted logs. Syntax, CLI help and forbidden binding
 checks passed. The complete log is retained privately at
 `/private/tmp/samsung-m9-tv-fixture-tests.log`. These results validate the
-fixture only. The owner has been asked whether a separate controlled LAN host
-is available; no answer or access is assumed.
+fixture only. The owner subsequently confirmed that only this Mac is available; no separate
+controlled LAN host is assumed.

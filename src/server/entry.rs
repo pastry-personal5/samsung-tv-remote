@@ -20,6 +20,9 @@ pub enum Action {
 pub enum Mode {
     Gui,
     Help,
+    ApiAccess {
+        request: bool,
+    },
     CredentialProbe {
         action: super::credential_probe::Action,
         id: String,
@@ -43,6 +46,15 @@ pub fn parse(arguments: &[OsString]) -> Result<Mode, LaunchError> {
     }
     if arguments.len() == 1 && arguments[0] == "--help" {
         return Ok(Mode::Help);
+    }
+    if arguments[0] == "--server-api-access" {
+        return match arguments.get(1).and_then(|argument| argument.to_str()) {
+            Some("--inspect") if arguments.len() == 2 => Ok(Mode::ApiAccess { request: false }),
+            Some("--request-access") if arguments.len() == 2 => {
+                Ok(Mode::ApiAccess { request: true })
+            }
+            _ => Err(LaunchError::Denied),
+        };
     }
     if arguments[0] == "--server-credential-probe" {
         if arguments.len() != 3 {
@@ -114,6 +126,30 @@ pub fn dispatch(arguments: &[OsString]) -> Option<i32> {
             return Some(1);
         }
     };
+    if let Mode::ApiAccess { request } = mode {
+        // A single foreground maintenance call, before Tokio, Iced, profile
+        // access or server composition. Never reached by automatic recheck.
+        return Some(
+            match std::env::current_exe().and_then(|executable| {
+                crate::infrastructure::macos::api_access::run(!request, &executable)
+            }) {
+                Ok(report) => {
+                    let passed =
+                        !request || (report["gui"] == "available" && report["mcp"] == "available");
+                    println!("{report}");
+                    if passed {
+                        0
+                    } else {
+                        1
+                    }
+                }
+                Err(_) => {
+                    eprintln!("{}", json!({"error":"api_access_unavailable"}));
+                    1
+                }
+            },
+        );
+    }
     if let Mode::CredentialProbe { action, id } = mode {
         return Some(match super::credential_probe::run(action, &id) {
             Ok((report, passed)) => {
@@ -147,7 +183,7 @@ pub fn dispatch(arguments: &[OsString]) -> Option<i32> {
         );
     }
     if mode == Mode::Help {
-        println!("Samsung TV Remote\nDefault: open GUI\nProduction server: --server[|-start|-status|-stop|-resume|-restart] (signed executable required)\nDevelopment: --server[|-start|-status|-stop|-resume|-restart] --fake-profile <absolute-existing-parent>\nGUI probe: --gui-probe --fake-profile <absolute-existing-parent>\nSigned credential acceptance: --server-credential-probe create|read|update|delete <disposable-v4-uuid>");
+        println!("Samsung TV Remote\nDefault: open GUI\nProduction server: --server[|-start|-status|-stop|-resume|-restart] (signed executable required)\nDevelopment: --server[|-start|-status|-stop|-resume|-restart] --fake-profile <absolute-existing-parent>\nGUI probe: --gui-probe --fake-profile <absolute-existing-parent>\nForeground API access: --server-api-access --inspect|--request-access (Apple-signed executable required)\nSigned credential acceptance: --server-credential-probe create|read|update|delete <disposable-v4-uuid>");
         return Some(0);
     }
     let (action, selected, inherited) = match mode {

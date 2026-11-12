@@ -8,22 +8,18 @@ use crate::control_client::{
 impl App {
     pub(super) fn remote_command(&mut self, command: Command) -> Task<Message> {
         let (Some(remote), Some(snapshot)) = (&self.remote, &self.snapshot) else {
-            return self.publish(
-                MessageSeverity::Warning,
-                MessageSource::MainWindow,
-                "Control server is still connecting; the action was not submitted.",
-            );
+            self.server_notice =
+                Some("Control server is still connecting; the action was not submitted.".into());
+            return Task::none();
         };
         if self.remote_management
             || self.awaiting_snapshot
             || !remote.connected()
             || snapshot.admission_closed
         {
-            return self.publish(
-                MessageSeverity::Warning,
-                MessageSource::MainWindow,
-                "Control server is unavailable; the action was not submitted.",
-            );
+            self.server_notice =
+                Some("Control server is unavailable; the action was not submitted.".into());
+            return Task::none();
         }
         if self.intents.len() >= 64 {
             return self.publish(
@@ -78,7 +74,8 @@ impl App {
                 }
                 let apply = self.apply_snapshot(*snapshot);
                 if replaced {
-                    Task::batch([apply,self.publish(MessageSeverity::Warning,MessageSource::MainWindow,"Server restarted. Previous unavailable outcomes remain unknown; no TV action was repeated.")])
+                    self.server_notice = Some("Server restarted. Previous unavailable outcomes remain unknown; no TV action was repeated.".into());
+                    apply
                 } else {
                     apply
                 }
@@ -90,23 +87,9 @@ impl App {
                 ) {
                     self.interrupt_client_flow();
                 }
-                let text = status_text(&status);
-                let ordinary = matches!(
-                    status,
-                    Status::Connected | Status::Connecting | Status::Starting
-                );
                 self.remote_status = Some(status);
                 self.refresh_client_controls();
-                self.settings_status = text.clone();
-                self.publish(
-                    if ordinary {
-                        MessageSeverity::Information
-                    } else {
-                        MessageSeverity::Warning
-                    },
-                    MessageSource::MainWindow,
-                    text,
-                )
+                Task::none()
             }
             Update::History(receipt) => {
                 if self
@@ -166,40 +149,71 @@ impl App {
             return Task::none();
         };
         match result {
-            Ok(receipt)=>{
-                if intent.operation.is_some_and(|id|id!=receipt.id)
-                    || self.intents.iter().any(|(other,intent)| *other!=tag && intent.operation==Some(receipt.id)) {
+            Ok(receipt) => {
+                if intent.operation.is_some_and(|id| id != receipt.id)
+                    || self.intents.iter().any(|(other, intent)| {
+                        *other != tag && intent.operation == Some(receipt.id)
+                    })
+                {
                     return Task::none();
                 }
-                if self.snapshot.as_ref().is_none_or(|snapshot|snapshot.epoch!=receipt.epoch) {
-                    return self.publish(MessageSeverity::Warning,MessageSource::MainWindow,"The server lifetime changed before the receipt arrived; no action will be repeated.");
+                if self
+                    .snapshot
+                    .as_ref()
+                    .is_none_or(|snapshot| snapshot.epoch != receipt.epoch)
+                {
+                    self.server_notice = Some("The server lifetime changed before the receipt arrived; no action will be repeated.".into());
+                    return Task::none();
                 }
                 if receipt.terminal {
-                    let intent=self.intents.remove(&tag).expect("known local context");
-                    let follow=self.client_terminal(&intent.command,intent.context,&receipt);
-                    let (severity,text)=workflows::outcome_message(&receipt);
-                    if !self.workflows.conflict {self.settings_status=text.clone();}
-                    Task::batch([follow,self.publish(severity,MessageSource::MainWindow,text)])
+                    let intent = self.intents.remove(&tag).expect("known local context");
+                    let follow = self.client_terminal(&intent.command, intent.context, &receipt);
+                    let (severity, text) = workflows::outcome_message(&receipt);
+                    if !self.workflows.conflict {
+                        self.settings_status = text.clone();
+                    }
+                    Task::batch([
+                        follow,
+                        self.publish(severity, MessageSource::MainWindow, text),
+                    ])
                 } else {
-                    self.intents.get_mut(&tag).expect("known local context").operation=Some(receipt.id);
+                    self.intents
+                        .get_mut(&tag)
+                        .expect("known local context")
+                        .operation = Some(receipt.id);
                     Task::none()
                 }
             }
             // Known admission is monotonic even if a cancelled/late direct
             // callback disagrees. Only the tracker can settle it by lookup.
-            Err(_) if intent.operation.is_some()=>Task::none(),
-            Err(SubmitError::Superseded)=>Task::none(),
-            Err(SubmitError::Ambiguous)=>self.publish(MessageSeverity::Warning,MessageSource::MainWindow,"The request reply was lost. Recovering its original result by lookup; it will not be submitted again."),
-            Err(error)=>{
-                self.end_client_context(tag,false);
-                let text=match error {
-                    SubmitError::NotAdmitted(code)=>workflows::failure_message(code),
-                    SubmitError::Unavailable=>"The server disconnected before submission. No TV request was made.",
-                    SubmitError::Busy=>"The client cannot track another request yet. No TV request was made.",
-                    SubmitError::Invalid=>"The request is invalid. No TV request was made.",
-                    SubmitError::Ambiguous|SubmitError::Superseded=>unreachable!("handled above"),
+            Err(_) if intent.operation.is_some() => Task::none(),
+            Err(SubmitError::Superseded) => Task::none(),
+            Err(SubmitError::Ambiguous) => {
+                self.server_notice = Some("The request reply was lost. Recovering its original result by lookup; it will not be submitted again.".into());
+                Task::none()
+            }
+            Err(error) => {
+                self.end_client_context(tag, false);
+                let server_error = matches!(error, SubmitError::Unavailable);
+                let text = match error {
+                    SubmitError::NotAdmitted(code) => workflows::failure_message(code),
+                    SubmitError::Unavailable => {
+                        "The server disconnected before submission. No TV request was made."
+                    }
+                    SubmitError::Busy => {
+                        "The client cannot track another request yet. No TV request was made."
+                    }
+                    SubmitError::Invalid => "The request is invalid. No TV request was made.",
+                    SubmitError::Ambiguous | SubmitError::Superseded => {
+                        unreachable!("handled above")
+                    }
                 };
-                self.publish(MessageSeverity::Warning,MessageSource::MainWindow,text)
+                if server_error {
+                    self.server_notice = Some(text.into());
+                    Task::none()
+                } else {
+                    self.publish(MessageSeverity::Warning, MessageSource::MainWindow, text)
+                }
             }
         }
     }

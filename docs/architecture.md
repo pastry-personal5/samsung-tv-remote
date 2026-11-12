@@ -20,7 +20,7 @@ durable reconciliation. See [M7 evidence](phase-2/milestone-07-review.md) and
 Samsung TV Remote is one Rust package. Server composition connects
 `application → domain` policy to `infrastructure → application/domain` adapters.
 Presentation uses `control_client` and pure shared values. `main.rs` dispatches
-modes and composes the client; `server/mode.rs` composes production adapters.
+modes and composes the client; `server/process.rs` composes production adapters.
 UI code never constructs Samsung wire frames or owns a TV socket; application
 policy never imports Iced or macOS APIs. The required GUI boundary check rejects
 runtime/adapters, raw service receipts and persistence access from presentation.
@@ -41,6 +41,15 @@ services; legacy data is left untouched. Explicit `--gui-probe --fake-profile`
 uses the same client with separate owner-only `m8-fake-v1` storage, strict
 development-document envelopes and synthetic credential presence markers.
 Production stores reject that format even if renamed or copied.
+
+Exceptional API-item access can be requested through the actual Apple-signed
+executable's explicit `--server-api-access --request-access` maintenance mode.
+It runs before GUI/runtime/profile construction and reads only the existing
+fresh-service API roles, without printing or changing their values. Its
+`--inspect` variant makes no Keychain calls. Neither ordinary startup nor
+credential recheck invokes this foreground approval path; routine server
+credential queries keep Keychain UI disabled. Approving a standalone helper
+does not prove access for the application's executable path.
 
 Server startup performs no TV action. After authenticated restore, each GUI
 lifetime may request one Connect for an idle, disconnected saved selection.

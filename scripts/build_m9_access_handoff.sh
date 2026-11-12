@@ -33,6 +33,11 @@ cp target/release/examples/authorize_api_access "$helper"
 cat > "$handoff/README.txt" <<'TEXT'
 This standalone foreground helper is not part of app startup.
 Inspection has made no Keychain calls. No signer setting was changed.
+Approving this helper does not prove access for the app at another path.
+Prefer the actual Apple-signed app executable's explicit mode:
+  --server-api-access --inspect
+  --server-api-access --request-access
+Then independently verify routine UI-off application access.
 
 After explicit user approval, run this helper with --request-access and the
 same signed candidate.app path. macOS may request permission for each of the

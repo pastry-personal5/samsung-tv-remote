@@ -12,6 +12,7 @@ pub enum SettingsPage {
     #[default]
     Discovery,
     WakeOnLan,
+    Servers,
 }
 
 #[derive(Debug, Clone)]

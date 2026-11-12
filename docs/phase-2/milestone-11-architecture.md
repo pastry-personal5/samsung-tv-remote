@@ -4,8 +4,9 @@ Status: Planned
 
 ## Approach
 
-P2-M9 supplies the first signed two-executable bundle and real-profile
-cutover. In this milestone, harden that committed build and per-user launch
+P2-M9 supplies the GUI client migration and signed same-executable GUI/server
+composition with a fresh server-owned profile. In this milestone, harden the
+committed build and per-user launch
 mechanism for installation, upgrade, explicit start and stop, crash restart,
 and uninstall. A single-instance guard and authenticated readiness check
 distinguish an existing server from an unrelated process occupying the
@@ -20,8 +21,10 @@ login-time startup.
 
 Use a per-user endpoint discovery or allocation rule that remains usable by
 an explicitly configured MCP client and never attaches across macOS users.
-Verify the helper executable's signing identity, Local Network permission,
-and legacy Keychain access in the actual bundle, not only under `cargo run`.
+Verify the GUI/server executable and any MCP access helper's signing identity,
+Local Network permission, and fresh-service Keychain access in the actual
+bundle, not only under `cargo run`. Preserve legacy records and credentials
+without importing them; the owner excluded device-key migration.
 Exercise denied and locked Keychain, revoked Local Network permission, and
 upgrade with a stable local signing identity. The Phase 2 target is the
 owner’s Mac with a local signed installation; no notarization is required.
@@ -38,7 +41,7 @@ remote socket write, and actual TV-state observation remain distinct facts.
 
 Exercise the actual signed bundle and chosen MCP client across GUI exit and
 server restart. Record only sanitized hardware evidence. Complete the module
-refactor by removing any remaining temporary in-process adapter, enforcing
-the GUI dependency boundary, and updating `docs/architecture.md` from current
-single-process guidance to the implemented server/client design. Preserve the
+refactor by retaining the mandatory GUI dependency boundary and verifying that
+the removed in-process adapter has no replacement control path. Keep current
+architecture documentation aligned with the server/client design. Preserve the
 historical Phase 1 records and do not broaden Samsung capability claims.

@@ -14,15 +14,82 @@ cargo run
 The GUI uses the Control API Server. Production startup requires a locally
 signed executable; an unsigned/ad-hoc `cargo run` displays a signing block
 without opening the production profile. Use the isolated fake probe below for
-unsigned development. Build the signed app bundle with `make bundle`. It uses `SAMSUNG_TV_CODESIGN_IDENTITY` if set, or the
-identity saved in `target/local-signing-identity.txt` by
-`zsh scripts/create_local_signing_identity.sh`. The bundle is written to
+unsigned development. Build the signed app bundle with `make bundle`. Set
+`SAMSUNG_TV_CODESIGN_IDENTITY` to an Apple Development or Developer ID identity,
+or save that identity's fingerprint in `target/local-signing-identity.txt`.
+The builder requires an Apple-backed signature and a TeamIdentifier before
+replacing the existing bundle. The self-signed identity produced by
+`scripts/create_local_signing_identity.sh` is for isolated probes and cannot
+build a production bundle. The bundle is written to
 `target/bundle/Samsung TV Remote.app`. Launch that bundle for native review;
 `cargo run` does not prove native bundle permission behavior.
 
+### Install and update the macOS app
+
+Use one build-and-install command, then open the installed app:
+
+```sh
+make install-mac
+make run-mac
+make server-status
+```
+
+`install-mac` builds once, copies the signed bundle into a temporary directory
+under `~/Applications`, and verifies it before closing the installed GUI and
+server. The installer identifies processes by their exact executable path,
+owner and start time, sends SIGTERM, and waits up to 30 seconds for them to exit.
+This also recovers a detached server whose executable was overwritten by an
+earlier installation. Shutdown affects every client attached to that server;
+finish current TV operations and save GUI drafts before installing. If a
+process does not settle, installation aborts without replacing its bundle or
+force-killing it. Process-discovery errors also abort installation.
+
+After settlement, the installer moves the old bundle aside, publishes the new
+bundle by rename, and verifies its signature again. A publication/verification
+failure restores the previous bundle; if rollback fails, both artifacts are
+retained with their paths printed. Successful updates retain the previous app
+in a printed `.samsung-tv-remote.previous-*.noindex` directory under the same
+Applications directory. Only the application bundle is replaced. Profiles,
+pairing/API credentials and intentional server Stop markers are preserved.
+Concurrent installers are rejected. Avoid launching the app during replacement.
+
+If you already ran `make bundle`, install that exact signed artifact without
+building/signing it again:
+
+```sh
+make install-built-bundle
+make run-mac
+```
+
+`run-mac`/`run-mac-app` and the compatibility aliases `open-mac`/`open-mac-app`
+open the installed bundle with normal macOS instance reuse. They do not rebuild,
+install, reset credentials or forcibly restart a server. `server-status` checks
+the installed executable's authenticated attachment without starting a server.
+An intentional Stop still requires explicit Resume in Settings → Servers.
+
+If native API access needs approval after a signer change, run:
+
+```sh
+make request-api-access
+```
+
+Review the native dialogs, then explicitly recheck credentials in Settings →
+Servers. This separate foreground command reads existing API items and does
+not start the server or create missing items; a first launch provisions them.
+A successful request does not prove that an older running server's signature
+is valid. In the observed failed upgrade, `codesign --verify --strict <server-pid>`
+reported “the code on disk does not match what is running,” while the installed
+bundle passed verification. The safe installer settles that old process before
+replacement. Reopening another GUI cannot settle a detached server.
+
+### Preserved candidate builds and signing review
+
 For an update check while an older bundle is running, use `make bundle-candidate`.
 It creates a new `target/.m9-candidate.XXXXXX.noindex/Samsung TV Remote.app` and preserves
-the older executable. `make bundle` overwrites the ordinary bundle path.
+the older executable. `make bundle` refuses to replace its ordinary output
+bundle while an app/server is running from that exact path. Installation settles
+only processes from the destination bundle; a server running from a different
+candidate remains under its own explicit lifecycle controls.
 The M9 controlled comparison found that the local self-signed identity could
 not read its predecessor's Keychain items after a rebuild, despite an equal
 designated requirement. Apple Development builds with the same TeamIdentifier
@@ -30,9 +97,35 @@ passed disposable cross-build read/update/delete. See the
 [implementation evidence](phase-2/milestone-09-implementation.md#signed-rebuild-investigation-2026-11-12).
 Existing self-signed items still require explicit access approval before a
 signer change; do not delete or regenerate them to conceal an access failure.
-M9 native acceptance remains open.
+M9 native acceptance remains open. The standalone foreground helper can read
+the existing API items after native approval while the app still reports
+access denied; approval of a different helper path is insufficient evidence.
 
-The explicit foreground API access helper can be prepared for inspection with:
+If an installed GUI reports `bootstrap_denied` while an approved candidate's
+`--server-status` reports `serving/ready`, compare their
+`codesign -d --verbose=4 -r-` output. A self-signed installed GUI cannot
+authenticate to an Apple-signed owner. Install the approved Apple-signed bundle and correct the saved build
+identity; credential recheck cannot repair a signing identity mismatch. Keep
+existing API credentials and TV data intact.
+
+For explicit access review, use the actual Apple-signed candidate executable:
+
+```sh
+'/absolute/path/to/Samsung TV Remote.app/Contents/MacOS/samsung-tv-remote' \
+  --server-api-access --inspect
+'/absolute/path/to/Samsung TV Remote.app/Contents/MacOS/samsung-tv-remote' \
+  --server-api-access --request-access
+```
+
+Inspection verifies the Apple-backed signature without Keychain calls. Run
+request mode only with explicit approval and foreground review of native
+dialogs. It reads only the existing fresh-service `gui`/`mcp` API items, never
+creates/replaces/deletes values, and stops after a blocked first item. It does
+not open profiles or start a server. Routine startup and credential recheck
+never invoke this mode. Verify UI-off access separately afterward; a successful
+foreground read alone is not persistent-access evidence.
+
+The standalone API access helper can still be prepared for inspection with:
 
 ```sh
 SAMSUNG_TV_CODESIGN_IDENTITY='<Apple Development identity>' \
@@ -82,7 +175,8 @@ server. It owns no local TV runtime; closing it detaches without stopping the
 server. Production storage is fresh and separate from legacy data. Never use
 the development namespace with production storage or Keychain ports.
 
-The probe's server status bar is shared by the main and Settings windows.
+Server status and management controls are in Settings → Servers for both the
+production GUI and development probe.
 Stop requires confirmation that it affects every client and keeps the GUI open.
 Its result distinguishes a durable acknowledgment from a marker observed
 after a lost reply, and reports settlement separately. Resume is explicit.
@@ -136,6 +230,13 @@ that presentation and default composition cannot import runtime/TV/storage
 adapters, server handles or raw service receipts. Run it directly with Python 3
 while changing the boundary. Its negative corpus checks that forbidden cases
 fail and that the fake-only debug renderer capture stays narrowly scoped.
+
+`cargo test --test bundle_install --test bundle_signing` covers installation
+ordering, process identity, settlement timeout, signature failure, retained
+rollback artifacts and the running-build guard with temporary bundles and fake
+process/signing boundaries. Run its Python cases directly with
+`python3 -B tests/test_macos_bundle_install.py`. These tests never stop the
+installed app, access Keychain or replace the owner's bundle.
 
 Format with `cargo fmt` when the formatting check fails. Address Clippy
 warnings rather than suppressing them without a documented reason. `cargo test`

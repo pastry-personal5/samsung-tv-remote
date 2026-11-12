@@ -1162,14 +1162,11 @@ async fn client_lifecycle_missing_signed_identity_blocks_initialization_and_all_
     ));
     assert!(app.remote.is_none());
     assert!(!app.view_model.control_state().service_available);
-    assert!(app
-        .view_model
-        .messages()
-        .entries()
-        .back()
-        .unwrap()
-        .text
-        .contains("signed app bundle"));
+    assert_eq!(
+        app.management_error,
+        Some(ManagementError::Blocked(Blocked::SigningRequired))
+    );
+    assert!(app.view_model.messages().entries().is_empty());
     let task = app.update(Message::RecheckServer);
     run(&mut app, task).await;
     assert!(!app.remote_management && app.intents.is_empty());
@@ -1421,4 +1418,37 @@ async fn wake_failure_receipts_preserve_packet_facts_reason_and_warning_in_histo
             assert!(app.intents.is_empty());
         }
     }
+}
+
+#[tokio::test]
+async fn server_status_preserves_tv_guidance_and_stays_out_of_main_messages() {
+    use crate::control_client::{background::Status, reconnect::Blocked};
+    let (mut app, _) = App::new();
+    let guidance = app.settings_status.clone();
+    for status in [
+        Status::Connecting,
+        Status::Connected,
+        Status::Blocked(Blocked::Stopped),
+    ] {
+        let task = app.remote_update(Update::Status(status));
+        run(&mut app, task).await;
+        assert_eq!(app.settings_status, guidance);
+        assert!(app.view_model.messages().entries().is_empty());
+    }
+}
+
+#[tokio::test]
+async fn server_management_results_stay_in_servers_settings() {
+    let (mut app, _) = app();
+    app.remote_status = Some(crate::control_client::background::Status::Connected);
+    let guidance = app.settings_status.clone();
+    let messages = app.view_model.messages().entries().len();
+    let task = app.update(Message::RequestStopServer);
+    run(&mut app, task).await;
+    assert!(app.stop_confirmation.is_some());
+    let task = app.update(Message::ConfirmStopServer);
+    run(&mut app, task).await;
+    assert!(app.stop_result.is_some_and(|result| result.is_ok()));
+    assert_eq!(app.settings_status, guidance);
+    assert_eq!(app.view_model.messages().entries().len(), messages);
 }

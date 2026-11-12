@@ -43,6 +43,7 @@ pub struct App {
     remote_management: bool,
     pending_management: Option<crate::control_client::port::ManagementIntent>,
     management_error: Option<crate::control_client::port::ManagementError>,
+    server_notice: Option<String>,
     stop_result: Option<
         Result<
             crate::control_client::port::StopReport,
@@ -83,6 +84,7 @@ impl App {
                 remote_management: false,
                 pending_management: None,
                 management_error: None,
+                server_notice: None,
                 stop_result: None,
                 stop_confirmation: None,
                 awaiting_snapshot: false,
@@ -126,7 +128,7 @@ impl App {
         app.development_probe = true;
         app.launch_connected = false;
         app.tv_address = "synthetic-tv.invalid".into();
-        app.settings_status = "Development probe: connecting to the isolated fake server.".into();
+        app.server_notice = Some("Development probe: using the isolated fake server.".into());
         app.view_model.set_service_available(false);
         (
             app,
@@ -233,11 +235,7 @@ impl App {
                     },
                 ));
                 self.refresh_client_controls();
-                self.publish(
-                    MessageSeverity::Warning,
-                    MessageSource::MainWindow,
-                    lifecycle::management_error_text(error),
-                )
+                Task::none()
             }
             Message::RemoteUpdate(update) => self.remote_update(update),
             Message::RemoteAdmitted(sequence, result) => self.remote_admitted(sequence, result),
@@ -621,8 +619,9 @@ impl App {
             .map(|s| s.devices.as_slice())
             .unwrap_or(&[]);
         if self.settings_window == Some(window) {
-            let content = view::settings_window(view::SettingsView {
+            view::settings_window(view::SettingsView {
                 settings_page: self.settings_page,
+                server_panel: self.server_settings_panel(),
                 address: &self.tv_address,
                 candidates: &self.candidates,
                 saved_devices: devices,
@@ -649,20 +648,18 @@ impl App {
                 wake_active: self.wake_active,
                 wake_conflict: self.workflows.conflict,
                 service_available: self.view_model.control_state().service_available,
-            });
-            self.server_status_bar(content)
+            })
         } else {
             let configured = devices.iter().any(|d| {
                 Some(d.id) == self.control().selected_device() && d.wake.active_mac().is_some()
             });
-            let content = view::main_window(
+            view::main_window(
                 &self.view_model,
                 self.wake_stage(),
                 configured,
                 self.wake_tick,
                 self.power_recovery(),
-            );
-            self.server_status_bar(content)
+            )
         }
     }
 
@@ -1101,13 +1098,19 @@ mod tests {
     }
 
     #[test]
-    fn settings_sidebar_switches_between_discovery_and_wake_on_lan() {
+    fn settings_sidebar_switches_between_all_categories() {
         let (mut app, _) = App::new();
         assert_eq!(app.settings_page, SettingsPage::Discovery);
 
         let _ = app.update(Message::SelectSettingsPage(SettingsPage::WakeOnLan));
 
         assert_eq!(app.settings_page, SettingsPage::WakeOnLan);
+
+        let _ = app.update(Message::SelectSettingsPage(SettingsPage::Servers));
+        assert_eq!(app.settings_page, SettingsPage::Servers);
+
+        let _ = app.update(Message::SelectSettingsPage(SettingsPage::Discovery));
+        assert_eq!(app.settings_page, SettingsPage::Discovery);
     }
 
     #[test]

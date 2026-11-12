@@ -77,9 +77,14 @@ order with private caching hints suited to a stable catalog; TV state changes
 do not change the tool list. Freeze nonnegative `ttlMs` and
 `cacheScope: "private"` for discovery/catalog results under the revision's
 [cache rules](https://modelcontextprotocol.io/specification/2026-07-28/server/utilities/caching).
-Credential changes invalidate that authorization context's cache even though
-operation ownership retains its stable identity. TV reads and mutation
-results do not inherit catalog caching. Verify Claude Code both with deferred
+Catalog cache reuse must be partitioned by server build/catalog revision and
+authorization context. A bearer rotation does not change operation ownership.
+Do not assume the server can erase an installed client's cached definitions:
+every invocation still authenticates, checks capability and validates current
+schemas even when no fresh `tools/list` occurs. Discovery/catalog cache hints
+are protocol metadata, not permission to cache bearer-bearing HTTP exchanges
+in an intermediary; use HTTP `Cache-Control: no-store` on `/mcp` responses.
+TV reads and mutation results do not inherit catalog caching. Verify Claude Code both with deferred
 tool search and with all definitions loaded upfront.
 
 Make read results summary-first and bounded, with a separate inspect path
@@ -207,21 +212,39 @@ Hold reservations through final response flush/drop. Test mixed `/v1` and
 `/mcp` saturation, stalled request/response bodies and false read headers on
 mutations, including when the owner registry is full.
 
+Freeze the ingress-to-semantic reservation transition, not just pool totals.
+Unclassified POST bodies cannot all consume ordinary slots until parsing ends:
+that would block recovery reads when ordinary slots are saturated. Nor may
+parsing add a second 64-request allowance. Account parsing within the same
+aggregate ceiling with a bounded, explicit classification allocation; release
+or transfer its permit atomically before taking the semantic reservation.
+Never await one pool while retaining a permit needed by that pool's waiters.
+Do not lend protected query/management capacity to unclassified or mutating
+requests. The freeze record must show capacity accounting for each phase and
+prove that a valid recovery read can reach classification during mutation
+saturation. Test slow unclassified bodies separately; connection/ingress
+exhaustion may reject promptly, but must not deadlock or leak reservations.
+
 M8's `ControlService::lookup` and `operation` are immediate queries, not
 long-poll APIs. Implement optional waiting above that boundary using an atomic
 subscription followed by private lookup/recheck, a monotonic deadline and
 bounded waiter reservations. A revision gap requires fresh private lookup;
 events are wake-up hints, not authority for exposing another client's result.
-Recheck after attaching, on wake-up and once at the deadline so a terminal
-transition cannot be lost between subscription and lookup. Unrelated events
+Validate epoch, lookup selector, wait range and cursor before allocating a
+subscriber. Recheck after attaching, on wake-up and once at the deadline so a
+terminal transition cannot be lost between subscription and lookup. Unrelated events
 cannot reset that deadline. Waiting consumes existing owner subscriber
 capacity as well as the query reservation; release both on disconnect,
 revocation, Stop and timeout, and report saturation without a busy retry loop.
 Cap the effective wait by the remaining end-to-end HTTP deadline, allowing
 time to encode and flush the result; body parsing must not create a fresh
 ten-second budget after the enclosing request deadline is nearly exhausted.
-Do not hold the service owner while waiting or repeatedly submit lookups in
-a tight loop. Freeze concrete page/string limits and saturation
+A closed event receiver is not a pending-operation result: perform a final
+private lookup, then resubscribe only within the original deadline and bounded
+capacity, or return a typed service-unavailable result. Test backlog closure,
+Stop, owner shutdown and revocation while waiting without revealing another
+principal's outcome. Do not hold the service owner while waiting or repeatedly
+submit lookups in a tight loop. Freeze concrete page/string limits and saturation
 responses in slice 1. Keep immediate lookup capacity available when waiters
 are full. Pagination/detail is an MCP projection over bounded service data;
 any cursor must bind query, principal and epoch and detect stale pages.
@@ -398,7 +421,12 @@ arguments, epoch and key and assert one service admission. Post-admission
 revocation or reply loss remains a recovery case, never evidence of no effect.
 
 Distinguish configuration saved from endpoint verified in the GUI. Installation
-success alone proves neither CLI revision compatibility nor readiness. Freeze
+success alone proves neither CLI revision compatibility nor readiness. Endpoint
+verification is a signed helper/authenticated discovery probe, not evidence
+that an existing Claude session loaded the new entry. Show client reconnection
+as a separate next step; only an actual isolated client call proves client
+attachment. Stop, blocked credentials or client restrictions may leave a saved
+entry unverified without causing another install or an automatic Resume. Freeze
 an isolated discovery/header-helper compatibility check in slice 1 before
 building the connection action. Record the CLI version and runtime actually
 used; unsupported revision/helper behavior blocks installed acceptance rather
@@ -406,6 +434,10 @@ than triggering an implicit older-protocol fallback.
 
 Define opt-in disconnect as removal of only this app's unchanged user entry
 and revocation of its MCP credential through the authorized management path.
+Disconnect applies to every Claude session sharing this identity. It blocks
+new admissions and closes their waits/connections; it does not undo or cancel
+already admitted TV effects. Preserve those outcomes for private lookup after
+an explicit re-enrollment, subject to normal epoch/retention limits.
 It must preserve unrelated settings and leave the GUI/server usable. If the
 entry changed concurrently, show a conflict instead of deleting it. Cover
 installed app relocation/update, missing helper and reconnection after explicit
@@ -415,6 +447,24 @@ M8 has in-memory revocation/tombstones but no public disconnect/regrant API.
 Specify the authenticated GUI-management path and restart-persistent revocation
 before implementing Disconnect. Neither bootstrap, recheck nor headersHelper
 may restore revoked access; re-enrollment requires an explicit Connect action.
+Use a durable enrollment state distinct from credential availability. Freeze
+fresh-profile and existing-M9-profile initialization explicitly: the presence
+of a preprovisioned MCP Keychain item is not evidence of a Connect enrollment.
+Reconcile this with `BootstrapServer::new`, which currently enrolls any role
+whose credential loads, and `refresh`, which currently rotates a loaded role.
+Every bootstrap, startup and refresh path must honor the durable disabled state.
+
+Disconnect durably disables enrollment before reporting access revoked; fence
+concurrent helper grants and admissions at that transition, then remove the
+unchanged configuration entry. If persistence fails, do not report durable
+revocation. If entry removal fails, keep access disabled and offer a removal
+retry. Test crashes between persistence, lease invalidation and config removal,
+including restart with a still-present entry and readable Keychain item.
+Explicit Connect after revocation must issue a fresh bearer and invalidate all
+previous bearers while retaining the same MCP principal and deduplication
+history. A delayed helper from the old enrollment must not publish a valid
+header after regrant; fence it by enrollment generation. Keep fresh enrollment,
+ordinary credential refresh and explicit regrant distinct in the API.
 Track entry removal and credential revocation separately if either fails,
 with safe retry guidance. Configuration writes need concurrency protection
 that the selected writer actually honors: atomic rename alone prevents a torn

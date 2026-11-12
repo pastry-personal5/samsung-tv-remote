@@ -596,6 +596,27 @@ fn executable_modes_select_the_gui_probe_before_any_local_adapter() {
     .is_err());
 }
 
+#[test]
+fn foreground_api_access_requires_an_explicit_closed_mode() {
+    use samsung_tv_remote::server::entry::{parse, Mode};
+    for (flag, request) in [("--inspect", false), ("--request-access", true)] {
+        assert_eq!(
+            parse(&["--server-api-access".into(), flag.into()]).unwrap(),
+            Mode::ApiAccess { request }
+        );
+    }
+    for arguments in [
+        vec!["--server-api-access"],
+        vec!["--server-api-access", "gui"],
+        vec!["--server-api-access", "--request-access", "mcp"],
+        vec!["--server-api-access", "--inspect", "--inherited-owner"],
+        vec!["--server-api-access", "--fake-profile", "/private/tmp/test"],
+    ] {
+        let arguments = arguments.into_iter().map(Into::into).collect::<Vec<_>>();
+        assert!(parse(&arguments).is_err());
+    }
+}
+
 #[tokio::test]
 async fn incompatible_build_requires_explicit_restart_and_never_replaces_the_owner() {
     let fixture = Fixture::new();
