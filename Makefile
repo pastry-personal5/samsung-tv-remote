@@ -1,4 +1,4 @@
-.PHONY: help run build bundle bundle-candidate clean test fmt check clippy install install-bundle install-mac uninstall
+.PHONY: help run build bundle bundle-candidate open-mac-app clean test fmt check clippy install install-bundle install-mac uninstall
 .DEFAULT_GOAL := help
 
 # Binary name from Cargo.toml
@@ -16,6 +16,7 @@ help:
 		'  build            Build the release binary' \
 		'  bundle           Build the signed application bundle' \
 		'  bundle-candidate Build an acceptance-candidate bundle' \
+		'  open-mac-app     Open the installed application' \
 		'  install-bundle   Install the application bundle to ~/Applications' \
 		'  install-mac      Alias for install-bundle' \
 		'  install          Install the release binary to /usr/local/bin' \
@@ -43,6 +44,9 @@ bundle bundle-candidate:
 		printf '%s\n' 'No signing identity configured. Run zsh scripts/create_local_signing_identity.sh or set SAMSUNG_TV_CODESIGN_IDENTITY.' >&2; \
 		exit 2; \
 	fi
+
+open-mac-app:
+	open "/Users/user1/Applications/Samsung TV Remote.app"
 
 test:
 	cargo test
