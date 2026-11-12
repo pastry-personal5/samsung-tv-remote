@@ -2,22 +2,28 @@
 
 Status: Active
 
-The default GUI uses the current in-process implementation. P2-M8 additionally
-implements an explicit isolated development server and native GUI probe in the
-same executable. The [Phase 2 target architecture](phase-2/target-architecture.md)
-plans production GUI cutover in M9 and MCP in M10; those are not shipping yet.
+The default GUI is a client of the Control API Server over protected loopback
+HTTP/SSE. The same signed executable dispatches server/management modes before
+Iced starts. P2-M9's source cutover is implemented; its signed production
+acceptance remains open. See the [implementation ledger](phase-2/milestone-09-implementation.md)
+for the failed self-signed rebuild gate and current native evidence. MCP remains
+P2-M10 work in the [target architecture](phase-2/target-architecture.md).
 
 The headless Tokio runtime in `application/runtime.rs` owns TV workflow,
-effects and retained operations. The default Iced GUI calls it through the
-temporary in-process adapter. Pairing/re-pair, reconnect rotation and Forget
+effects and retained operations in the server process. Iced owns local windows,
+drafts and intent context and consumes typed API results. It constructs no local
+runtime, TV or persistence adapter. Pairing/re-pair, reconnect rotation and Forget
 use durable recovery markers; selection/configuration use fenced workers and
 durable reconciliation. See [M7 evidence](phase-2/milestone-07-review.md) and
 [M8 evidence](phase-2/milestone-08-review.md).
 
-Samsung TV Remote is one Rust package. Its dependency direction is
-`presentation → application → domain` and `infrastructure → application/domain`.
-`main.rs` wires the adapters. UI code never constructs Samsung wire frames or
-owns a socket; application policy never imports Iced or macOS APIs.
+Samsung TV Remote is one Rust package. Server composition connects
+`application → domain` policy to `infrastructure → application/domain` adapters.
+Presentation uses `control_client` and pure shared values. `main.rs` dispatches
+modes and composes the client; `server/mode.rs` composes production adapters.
+UI code never constructs Samsung wire frames or owns a TV socket; application
+policy never imports Iced or macOS APIs. The required GUI boundary check rejects
+runtime/adapters, raw service receipts and persistence access from presentation.
 
 | Area | Responsibility |
 | --- | --- |
@@ -25,18 +31,24 @@ owns a socket; application policy never imports Iced or macOS APIs.
 | `src/application/` | TV selection, trust, pairing, connection, command admission and dispatch, Wake flow, typed outcomes, and ports. |
 | `src/infrastructure/` | Secure Samsung session and codec, SSDP discovery, UDP Wake, preferences, and macOS Keychain. |
 | `src/presentation/iced/` | Windows, input mapping, visual remote, view state, and user-facing feedback. |
-| `src/server/` | Headless HTTP/SSE, access/bootstrap, detached lifecycle/launch and isolated fake-profile composition. |
+| `src/server/` | Headless HTTP/SSE, access/bootstrap, detached lifecycle/launch and production/fake composition. |
 | `src/control_client/` | Native bounded HTTP/SSE client, protected attach, reconnect policy and safe projections. |
 | `src/main.rs` | Early same-executable mode dispatch, then default GUI composition. |
 
-In explicit `--gui-probe --fake-profile` mode, Iced uses `control_client` over
-loopback to a detached `--server` owner and constructs no local TV runtime.
-The server uses owner-only `m8-fake-v1` storage, strict development-document
-envelopes and synthetic credential presence markers. Production stores reject
-that format even if renamed or copied. Startup performs no discovery, Pairing,
-connect or Wake; all effects require explicit requests. GUI close detaches;
+Default startup authenticates code identity before opening the fresh
+`control-v1` profile. The server exclusively owns fresh pairing/API Keychain
+services; legacy data is left untouched. Explicit `--gui-probe --fake-profile`
+uses the same client with separate owner-only `m8-fake-v1` storage, strict
+development-document envelopes and synthetic credential presence markers.
+Production stores reject that format even if renamed or copied.
+
+Server startup performs no TV action. After authenticated restore, each GUI
+lifetime may request one Connect for an idle, disconnected saved selection.
+An atomic server guard rejects busy/ready races without retry. GUI close detaches;
 intentional Stop persists before acknowledgment and needs explicit GUI Resume.
 The lifetime lock spans worker settlement and HTTP/bootstrap listener closure.
+An incompatible owner needs explicit restart. Attachment recovery uses one
+bounded tracker and lookup scheduler and never replays a TV mutation.
 
 The private runtime owner holds the Selected TV, selection generation,
 connection lifecycle, and one bounded command queue. Each request targets a
@@ -63,7 +75,7 @@ channel does not report independent playback state, so a selected or
 reconnected TV starts unknown. A socket write records only the app's inferred
 next state; it does not observe the player.
 
-The Iced presentation maps pointer and keyboard input to typed service requests and
+The Iced presentation maps pointer and keyboard input to typed API requests and
 projects application results into the current [UX specification](ux-gui.md).
 Sources, Apps, and Text Input remain placeholders. Native keyboard focus and
 screen-reader support need further verification; see [Phase 1](phase-1/phase-1.md).

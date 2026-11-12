@@ -2,7 +2,9 @@
 
 Status: Active
 
-This records the current P1-M14 interface and owner decisions. Names are defined
+This records the implemented interface and owner decisions through P2-M9's
+API client source cutover. Signed native acceptance remains open in the
+[implementation ledger](phase-2/milestone-09-implementation.md). Names are defined
 in [UX terms](ux-term.md); placement is defined in the
 [information architecture](ux-information-architecture.md). The
 [research note](research/discovery-pairing-wake-ux.md) contains discovery,
@@ -26,6 +28,29 @@ current primary view's name. Its primary-view region scrolls rather than
 overlapping the Global Messages Pane. Power View puts Power Controls above Wake
 Steps. Sources, Apps, and Text Input use titled placeholder boxes;
 their capabilities are not implemented.
+
+## Server connection and lifecycle
+
+Main and Settings windows share a server status bar. Starting, attaching,
+connected, timed reconnect, sticky Stop, incompatible build, signing-required,
+blocked credentials and unsafe endpoint states have distinct text. API
+connection does not mean that a TV's paired remote channel is ready. During
+an outage, management request or wait for a fresh authenticated snapshot, TV
+commands are disabled while local navigation remains available.
+
+Stop server asks for confirmation that every client will disconnect and that
+accepted operations may still finish. It keeps the window open and reports
+durable acknowledgment, observed Stop marker and settlement as separate facts.
+Resume server explicitly clears sticky Stop; reopening the app does not.
+Restart server is explicit when the running build is incompatible. Recheck
+credentials or Check server state makes one protected attachment attempt and
+does not rotate credentials, restore revoked access or start a missing server.
+
+Closing all GUI windows detaches and leaves the server available. Reopening
+receives a fresh atomic snapshot. After the first authenticated restore, the
+GUI may request Connect once for an idle, disconnected saved selection. It
+skips empty, ready or busy state and does not repeat this on reattachment.
+Lost responses recover through lookup; no action is automatically replayed.
 
 ## Remote View
 
@@ -63,7 +88,10 @@ check, packet, reconnection, and paired remote readiness. Wake sends one magic
 packet to the configured active MAC, then waits up to 30 seconds for a paired
 remote channel. It does not repeat the packet. A sent packet, a ready remote
 channel, and visible TV panel power are different outcomes; the app cannot
-measure the last one.
+measure the last one. During a server outage, Wake Steps label the last received
+facts and wait for outcome recovery; a formerly active step does not keep
+animating as current progress. Cancellation distinguishes before-send,
+possibly-sent and already-sent outcomes.
 
 Power Toggle sends Samsung KEY_POWER only over a live paired connection. Try
 again and Cancel appear when their flow permits them. Cancellation may stop
@@ -105,6 +133,11 @@ applied when pairing succeeds. The fields must refer to the MAC shown by the
 intended TV for the chosen network interface; a host IP address is not the MAC.
 Invalid or incomplete entries are not a usable active Wake target.
 
+Drafts belong to their captured TV and configuration revision. External
+selection changes or unseen configuration revisions cannot retarget a save.
+Conflicting edits remain available for review/discard/reload; a late result
+cannot erase a newer edit or start a continuation for a different selection.
+
 Wake configuration does not prove that the TV supports waking from its current
 standby state or that the network will deliver the packet. The Power View
 presents the actual attempt and remote-readiness result.
@@ -113,8 +146,11 @@ presents the actual attempt and remote-readiness result.
 
 The Global Messages Pane stays below every primary view. The pointer-draggable
 Messages split bar adjusts its height while preserving usable room for the
-primary view. The feed is scrollable, chronological, and session-only, newest at
-the bottom. Rows have fixed-width Info or Warning severity labels and concise
+primary view. The scrollable feed appends messages at the bottom. It includes
+local feedback and recovered private operation outcomes from the server's
+bounded retention; it is not a complete durable activity log. Recovered history
+reports facts without starting follow-up actions. Rows have fixed-width Info or
+Warning severity labels and concise
 message text. It excludes sequence numbers, source bookkeeping, raw network
 payloads, credentials, entered text, and Debug-level diagnostics. Routine
 “Opened Settings” and “Closed Settings” messages are omitted. Setup status can also appear locally in
