@@ -20,6 +20,10 @@ pub enum Action {
 pub enum Mode {
     Gui,
     Help,
+    CredentialProbe {
+        action: super::credential_probe::Action,
+        id: String,
+    },
     Probe {
         base: PathBuf,
     },
@@ -39,6 +43,21 @@ pub fn parse(arguments: &[OsString]) -> Result<Mode, LaunchError> {
     }
     if arguments.len() == 1 && arguments[0] == "--help" {
         return Ok(Mode::Help);
+    }
+    if arguments[0] == "--server-credential-probe" {
+        if arguments.len() != 3 {
+            return Err(LaunchError::Denied);
+        }
+        let action = arguments[1]
+            .to_str()
+            .and_then(super::credential_probe::Action::parse)
+            .ok_or(LaunchError::Denied)?;
+        let id = arguments[2]
+            .to_str()
+            .filter(|id| super::credential_probe::account(id).is_some())
+            .ok_or(LaunchError::Denied)?
+            .to_owned();
+        return Ok(Mode::CredentialProbe { action, id });
     }
     if arguments[0] == "--gui-probe" {
         if arguments.len() != 3 || arguments[1] != "--fake-profile" {
@@ -95,6 +114,22 @@ pub fn dispatch(arguments: &[OsString]) -> Option<i32> {
             return Some(1);
         }
     };
+    if let Mode::CredentialProbe { action, id } = mode {
+        return Some(match super::credential_probe::run(action, &id) {
+            Ok((report, passed)) => {
+                println!("{report}");
+                if passed {
+                    0
+                } else {
+                    1
+                }
+            }
+            Err(error) => {
+                eprintln!("{}", json!({"error":error}));
+                1
+            }
+        });
+    }
     if let Mode::Probe { base } = mode {
         let Ok(executable) = std::env::current_exe() else {
             return Some(1);
@@ -112,7 +147,7 @@ pub fn dispatch(arguments: &[OsString]) -> Option<i32> {
         );
     }
     if mode == Mode::Help {
-        println!("Samsung TV Remote\nDefault: open GUI\nProduction server: --server[|-start|-status|-stop|-resume|-restart] (signed executable required)\nDevelopment: --server[|-start|-status|-stop|-resume|-restart] --fake-profile <absolute-existing-parent>\nGUI probe: --gui-probe --fake-profile <absolute-existing-parent>");
+        println!("Samsung TV Remote\nDefault: open GUI\nProduction server: --server[|-start|-status|-stop|-resume|-restart] (signed executable required)\nDevelopment: --server[|-start|-status|-stop|-resume|-restart] --fake-profile <absolute-existing-parent>\nGUI probe: --gui-probe --fake-profile <absolute-existing-parent>\nSigned credential acceptance: --server-credential-probe create|read|update|delete <disposable-v4-uuid>");
         return Some(0);
     }
     let (action, selected, inherited) = match mode {

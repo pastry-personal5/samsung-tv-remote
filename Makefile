@@ -1,4 +1,4 @@
-.PHONY: run build bundle clean test fmt check clippy install uninstall
+.PHONY: run build bundle bundle-candidate clean test fmt check clippy install uninstall
 .DEFAULT_GOAL := bundle
 
 # Binary name from Cargo.toml
@@ -10,13 +10,13 @@ run:
 build:
 	cargo build --release
 
-bundle:
+bundle bundle-candidate:
 	@set -eu; \
 	if [ -n "$${SAMSUNG_TV_CODESIGN_IDENTITY:-}" ]; then \
-		zsh scripts/build_macos_bundle.sh; \
+		zsh scripts/build_macos_bundle.sh $(if $(filter bundle-candidate,$@),--acceptance-candidate); \
 	elif [ -s target/local-signing-identity.txt ]; then \
 		IFS= read -r samsung_signing_identity < target/local-signing-identity.txt; \
-		SAMSUNG_TV_CODESIGN_IDENTITY="$$samsung_signing_identity" zsh scripts/build_macos_bundle.sh; \
+		SAMSUNG_TV_CODESIGN_IDENTITY="$$samsung_signing_identity" zsh scripts/build_macos_bundle.sh $(if $(filter bundle-candidate,$@),--acceptance-candidate); \
 	else \
 		printf '%s\n' 'No signing identity configured. Run zsh scripts/create_local_signing_identity.sh or set SAMSUNG_TV_CODESIGN_IDENTITY.' >&2; \
 		exit 2; \

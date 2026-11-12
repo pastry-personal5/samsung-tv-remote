@@ -4,6 +4,16 @@ set -euo pipefail
 repo_root="${0:A:h:h}"
 cd "$repo_root"
 
+if (( $# > 1 )); then
+    print -u2 'Expected at most one bundle option.'
+    exit 2
+fi
+case "${1:-}" in
+    ''|--unsigned-preview) ;;
+    --acceptance-candidate) ;;
+    *) print -u2 'Unknown bundle option.'; exit 2 ;;
+esac
+
 if [[ "${1:-}" != "--unsigned-preview" && -z "${SAMSUNG_TV_CODESIGN_IDENTITY:-}" ]]; then
     print -u2 'Set SAMSUNG_TV_CODESIGN_IDENTITY to a local code-signing identity.'
     print -u2 'Use --unsigned-preview only to inspect bundle structure and metadata.'
@@ -12,7 +22,14 @@ fi
 
 cargo build --release
 
-bundle="$repo_root/target/bundle/Samsung TV Remote.app"
+if [[ "${1:-}" == "--acceptance-candidate" ]]; then
+    # Preserve a live older bundle for signed update/compatibility checks.
+    # Each candidate is new; no running executable is overwritten in place.
+    candidate_parent=$(mktemp -d "$repo_root/target/m9-candidate.XXXXXX")
+    bundle="$candidate_parent/Samsung TV Remote.app"
+else
+    bundle="$repo_root/target/bundle/Samsung TV Remote.app"
+fi
 contents="$bundle/Contents"
 mkdir -p "$contents/MacOS" "$contents/Resources"
 cp "$repo_root/target/release/samsung-tv-remote" "$contents/MacOS/samsung-tv-remote"
@@ -43,5 +60,5 @@ if [[ "${1:-}" == "--unsigned-preview" ]]; then
 else
     codesign --force --sign "$SAMSUNG_TV_CODESIGN_IDENTITY" --timestamp=none "$bundle"
     codesign --verify --strict --verbose=2 "$bundle"
-    print 'Locally signed bundle created at target/bundle/Samsung TV Remote.app'
+    print "Locally signed bundle created at $bundle"
 fi

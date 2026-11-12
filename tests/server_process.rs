@@ -541,6 +541,23 @@ async fn gui_client_reattaches_after_process_outage_without_replaying_setup_conn
 fn executable_modes_select_the_gui_probe_before_any_local_adapter() {
     use samsung_tv_remote::server::entry::{parse, Action, Mode};
     assert_eq!(parse(&[]).unwrap(), Mode::Gui);
+    assert!(matches!(
+        parse(&[
+            "--server-credential-probe".into(),
+            "read".into(),
+            "550e8400-e29b-41d4-a716-446655440000".into()
+        ])
+        .unwrap(),
+        Mode::CredentialProbe { .. }
+    ));
+    for target in ["gui", "mcp", "dev_1", "../gui"] {
+        assert!(parse(&[
+            "--server-credential-probe".into(),
+            "delete".into(),
+            target.into()
+        ])
+        .is_err());
+    }
     assert_eq!(
         parse(&["--server".into()]).unwrap(),
         Mode::Production {

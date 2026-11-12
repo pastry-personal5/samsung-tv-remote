@@ -2,6 +2,7 @@
 pub mod access;
 pub mod bootstrap;
 pub mod control_http;
+pub mod credential_probe;
 pub mod development;
 pub mod entry;
 pub mod launch;
