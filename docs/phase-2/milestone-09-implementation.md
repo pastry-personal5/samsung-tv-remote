@@ -422,3 +422,31 @@ No request-mode run or live signer switch is authorized or claimed here. The
 owner has been asked to approve Apple signing and the native access handoff.
 Existing role items remain intact;
 success on disposable items does not satisfy the live-profile update gate.
+
+## Remaining acceptance tooling
+
+The [acceptance audit](milestone-09-acceptance-audit.md) maps all twelve overview
+checklist items to current source/test/native evidence and their unproven
+parts. It is not a completion review. Read-only revalidation still finds the
+original GUI/server alive and serving/ready, with unchanged bundle, handoff
+and legacy hashes. CUA inventory reports the app running but exact-path
+window inspection still returns `cgWindowNotFound`; no restart follows from
+that observation failure.
+
+The audit identified a missing real-adapter synthetic TV workflow. The new
+[native fixture](milestone-09-native-fixture.md) serves the Samsung TLS metadata
+and WebSocket routes with fixed synthetic identity/credentials, bounded
+connections/frames and foreground approve/deny/offline controls. It never
+contacts a TV, sends Wake, opens profiles or accesses Keychain. Its own
+automated checks use ephemeral loopback and generated certificates. Native
+Pairing/Wake/restore acceptance must still run through the selected signed
+bundle, and the OS Local Network gate still needs a separate controlled LAN
+host. No production target policy is relaxed to accept loopback and no such
+host has been identified or contacted. Physical TV smoke remains optional.
+The fixture's delegated checks passed all 8 tests, including actual TLS
+Pairing/reconnect, denial, key/Ping/Close, malformed frames/headers and
+offline/recovery with redacted logs. Syntax, CLI help and forbidden binding
+checks passed. The complete log is retained privately at
+`/private/tmp/samsung-m9-tv-fixture-tests.log`. These results validate the
+fixture only. The owner has been asked whether a separate controlled LAN host
+is available; no answer or access is assumed.
