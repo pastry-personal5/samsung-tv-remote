@@ -21,7 +21,7 @@ identity saved in `target/local-signing-identity.txt` by
 `cargo run` does not prove native bundle permission behavior.
 
 For an update check while an older bundle is running, use `make bundle-candidate`.
-It creates a new `target/m9-candidate.XXXXXX/Samsung TV Remote.app` and preserves
+It creates a new `target/.m9-candidate.XXXXXX.noindex/Samsung TV Remote.app` and preserves
 the older executable. `make bundle` overwrites the ordinary bundle path.
 The M9 controlled comparison found that the local self-signed identity could
 not read its predecessor's Keychain items after a rebuild, despite an equal

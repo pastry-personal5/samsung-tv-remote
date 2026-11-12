@@ -25,7 +25,12 @@ cargo build --release
 if [[ "${1:-}" == "--acceptance-candidate" ]]; then
     # Preserve a live older bundle for signed update/compatibility checks.
     # Each candidate is new; no running executable is overwritten in place.
-    candidate_parent=$(mktemp -d "$repo_root/target/m9-candidate.XXXXXX")
+    # Keep review-only candidates out of macOS application discovery. LaunchServices
+    # otherwise registers every retained candidate as another installed app.
+    candidate_parent=$(mktemp -d "$repo_root/target/.m9-candidate.XXXXXX")
+    noindex_candidate_parent="${candidate_parent}.noindex"
+    mv "$candidate_parent" "$noindex_candidate_parent"
+    candidate_parent="$noindex_candidate_parent"
     bundle="$candidate_parent/Samsung TV Remote.app"
 else
     bundle="$repo_root/target/bundle/Samsung TV Remote.app"
