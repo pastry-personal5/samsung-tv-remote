@@ -194,6 +194,11 @@ pub fn startup(value: StartupState) -> &'static str {
     }
 }
 
+pub fn recovery(value: &Snapshot) -> Value {
+    json!({"forget_recovery":value.recovery.map(|m|json!({"device_id":wire::device(m.target),"transaction_id":wire::device(m.transaction),"selection_cleared":m.selection_cleared,"credential_removed":m.credential_removed,"trust_removed":m.trust_removed,"record_removed":m.record_removed})),
+        "pairing_recovery":value.pairing_recovery.map(|m|json!({"device_id":wire::device(m.target),"transaction_id":wire::device(m.transaction),"repair":m.repair,"prior_selection":m.prior_selection.map(wire::device),"backup":m.backup.map(wire::device),"stage":match m.stage {crate::application::recovery::PairingStage::Prepared=>"prepared",crate::application::recovery::PairingStage::TokenSaved=>"token_saved",crate::application::recovery::PairingStage::TrustSaved=>"trust_saved",crate::application::recovery::PairingStage::DeviceSaved=>"device_saved",crate::application::recovery::PairingStage::SelectionSaved=>"selection_saved"},"cleanup":m.cleanup.map(|c|json!({"credential_removed":c.credential_removed,"trust_removed":c.trust_removed,"record_removed":c.record_removed,"selection_restored":c.selection_restored}))}))})
+}
+
 pub fn snapshot(value: &Snapshot) -> Value {
     let startup = startup(value.startup);
     let devices: Vec<_> = value
@@ -210,6 +215,7 @@ pub fn snapshot(value: &Snapshot) -> Value {
             )
         })
         .collect();
+    let recovery = recovery(value);
     json!({"server_epoch":wire::epoch(value.epoch),"revision":Counter(value.revision),"startup":startup,"admission_closed":value.admission_closed,
         "selected":value.control.selected_device().map(wire::device),"selection_generation":Counter(value.control.selection_generation()),
         "pairing": match value.control.pairing_state() { PairingState::NotStarted=>"not_started", PairingState::InProgress=>"in_progress", PairingState::Ready=>"ready", PairingState::Failed=>"failed" },
@@ -217,8 +223,7 @@ pub fn snapshot(value: &Snapshot) -> Value {
         "playback":match value.control.playback_state() {PlaybackState::Unknown=>"unknown",PlaybackState::AssumedPaused=>"assumed_paused",PlaybackState::AssumedPlaying=>"assumed_playing"},
         "devices":devices,"duplicate_records":value.duplicate_records,"storage_pending":value.storage_pending,"pairing_pending":value.pairing_pending,
         "wake":wake(value.wake),"wake_operation":value.wake_operation.map(wire::operation),
-        "forget_recovery":value.recovery.map(|m|json!({"device_id":wire::device(m.target),"transaction_id":wire::device(m.transaction),"selection_cleared":m.selection_cleared,"credential_removed":m.credential_removed,"trust_removed":m.trust_removed,"record_removed":m.record_removed})),
-        "pairing_recovery":value.pairing_recovery.map(|m|json!({"device_id":wire::device(m.target),"transaction_id":wire::device(m.transaction),"repair":m.repair,"prior_selection":m.prior_selection.map(wire::device),"backup":m.backup.map(wire::device),"stage":match m.stage {crate::application::recovery::PairingStage::Prepared=>"prepared",crate::application::recovery::PairingStage::TokenSaved=>"token_saved",crate::application::recovery::PairingStage::TrustSaved=>"trust_saved",crate::application::recovery::PairingStage::DeviceSaved=>"device_saved",crate::application::recovery::PairingStage::SelectionSaved=>"selection_saved"},"cleanup":m.cleanup.map(|c|json!({"credential_removed":c.credential_removed,"trust_removed":c.trust_removed,"record_removed":c.record_removed,"selection_restored":c.selection_restored}))}))})
+        "forget_recovery":recovery["forget_recovery"],"pairing_recovery":recovery["pairing_recovery"]})
 }
 
 /// Safe terminal details and HTTP status. Policy failures retain admission

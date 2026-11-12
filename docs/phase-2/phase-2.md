@@ -42,11 +42,16 @@ macOS permissions, and unavoidable first-use consent.
 | P2-M7 | Headless control runtime | TV workflow and effects run independently of Iced. | Done | [Overview](milestone-07-overview.md) · [Architecture](milestone-07-architecture.md) |
 | P2-M8 | Control HTTP server | Same-executable on-demand server, complete authenticated API/events, fresh isolated profile and early GUI probe. | Done | [Overview](milestone-08-overview.md) · [Architecture](milestone-08-architecture.md) · [Review](milestone-08-review.md) |
 | P2-M9 | GUI API migration | Complete typed GUI client, outcome recovery and signed fresh-profile cutover. | In progress | [Overview](milestone-09-overview.md) · [Architecture](milestone-09-architecture.md) |
-| P2-M10 | Streamable HTTP MCP | Full supported setup and control operations through `/mcp`. | Planned | [Overview](milestone-10-overview.md) · [Architecture](milestone-10-architecture.md) |
+| P2-M10 | Streamable HTTP MCP | Full supported setup and control operations through `/mcp`. | Active | [Overview](milestone-10-overview.md) · [Architecture](milestone-10-architecture.md) · [Implementation](milestone-10-implementation.md) |
 | P2-M11 | Integration and refactor completion | Cross-client, restart, packaging, security, accessibility, and hardware review; remove legacy control path. | Planned | [Overview](milestone-11-overview.md) · [Architecture](milestone-11-architecture.md) |
 
 Work in order. A milestone can start only when its required predecessor contract
 is stable; deferred verification must be recorded rather than assumed passed.
+The owner's 2026-11-12 instruction to complete P2-M10 authorizes implementation
+against the stable M8/M9 service boundary while M9's native acceptance remains
+open. This exception permits development and isolated validation; it does not
+waive M9's dependent production/signing/credential gates or M10 installed-client,
+model-budget and Local Network evidence.
 The old planned IDs remain Dropped rather than being reused, as required by
 the [development process](../development-process.md). Each new milestone has
 an overview and architecture record before implementation.

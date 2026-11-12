@@ -24,6 +24,7 @@ use crate::server::{
         endpoint::{build_identity, Manifest},
         stop::{settle_before_release, Lifecycle, NamespacedStopStore, StopStore},
     },
+    mcp::enrollment::{Enrollment, FileEnrollment},
     production::ProductionProfile,
     profile::Profile,
 };
@@ -156,6 +157,15 @@ async fn run_inner(
                 .map_err(|error| LaunchError::Bootstrap(bootstrap_error(error)))?,
         ),
     };
+    let enrollment = Arc::new(
+        Enrollment::online(
+            Arc::new(FileEnrollment::new(profile.directory().clone(), namespace)),
+            credentials,
+            access.clone(),
+        )
+        .retain_ownership(&ownership)
+        .map_err(|_| LaunchError::UnsafeMetadata)?,
+    );
     let mut term = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
         .map_err(|_| LaunchError::Unavailable)?;
     let mut interrupt = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::interrupt())
@@ -174,7 +184,7 @@ async fn run_inner(
     };
     let bootstrap = match Bootstrap::new(
         access.clone(),
-        credentials,
+        enrollment.clone(),
         verifier,
         Context {
             profile: location.profile,
@@ -193,12 +203,10 @@ async fn run_inner(
     let lifecycle = Lifecycle::start_in_namespace(runtime, store, ownership, namespace)
         .await
         .map_err(|_| LaunchError::Unavailable)?;
-    let http = Arc::new(HttpAdapter::new(
-        access,
-        services,
-        lifecycle.client.clone(),
-        build,
-    ));
+    let http = Arc::new(
+        HttpAdapter::new(access, services, lifecycle.client.clone(), build)
+            .with_enrollment(enrollment),
+    );
     let mut shutdown = lifecycle.http_shutdown.clone();
     let mut http_task = tokio::spawn(http.serve(listener, shutdown.clone()));
     let mut bootstrap_task = tokio::spawn(bootstrap.serve(socket, shutdown.clone()));

@@ -4,9 +4,19 @@ use std::sync::Arc;
 use std::time::Duration;
 use tokio::time::Instant;
 
+// A thin shared handle keeps receipts small enough for inline owner messages.
+// Borrow<str> preserves indexed lookup without allocating a query key.
+#[derive(Clone, PartialEq, Eq, Hash)]
+struct Key(Arc<String>);
+impl std::borrow::Borrow<str> for Key {
+    fn borrow(&self) -> &str {
+        self.0.as_str()
+    }
+}
+
 struct Record {
     client: ClientId,
-    key: Arc<str>,
+    key: Key,
     command: Command,
     receipt: Receipt,
     terminal: bool,
@@ -16,7 +26,7 @@ struct Record {
 pub(crate) struct Operations {
     records: HashMap<OperationId, Record>,
     epoch: super::control_service::Epoch,
-    keys: HashMap<ClientId, HashMap<Arc<str>, OperationId>>,
+    keys: HashMap<ClientId, HashMap<Key, OperationId>>,
     pending: HashMap<ClientId, usize>,
     expiry: VecDeque<(Instant, OperationId)>,
     next: u64,
@@ -122,8 +132,10 @@ impl Operations {
         {
             return Err(ServiceError::ClientLimit);
         }
+        let key = Key(Arc::new(key));
         let receipt = Receipt {
             id: OperationId(self.next),
+            key: key.0.clone(),
             metadata: command.metadata(self.epoch),
             outcome: None,
             expires_at: None,
@@ -133,7 +145,6 @@ impl Operations {
             .next
             .checked_add(1)
             .expect("operation identity exhausted");
-        let key: Arc<str> = key.into();
         self.keys
             .entry(client)
             .or_default()

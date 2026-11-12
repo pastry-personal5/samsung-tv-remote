@@ -2,6 +2,38 @@
 
 Status: Active
 
+- 2026-11-13 — Reviewed P2-M10 implementation and repaired original-intent
+  Connect recovery after a saved entry/lost reply, request-ID correlation on
+  duplicate-member rejection and bounded Unicode inspection labels. Added
+  deterministic regression coverage; see the [code review](milestone-10-code-review.md).
+  M10 remains Active with installed/native/client acceptance open.
+
+- 2026-11-13 — Resumed P2-M10 development. Fixed the interrupted configuration
+  writer's compile error and added ordered Connect/Disconnect coordination,
+  exact-entry relocation/removal, retained-file conflict recovery and
+  cancellation-safe workflow locking. Added isolated file-race and offline
+  configuration/enrollment tests. GUI integration, client preflight and signed
+  acceptance remain open; see the [implementation ledger](milestone-10-implementation.md).
+
+- 2026-11-12 — Began P2-M10 implementation at the owner's explicit request,
+  recording an entry exception while M9 acceptance stays open. Added the shared
+  `/mcp` transport, deterministic 15-tool catalog, typed service mappings,
+  bounded private lookup/pages and independent output-schema checks. The
+  transport foundation passed focused checks, Clippy and the full Cargo suite.
+  Durable enrollment and protected management are now under verification; the
+  helper, GUI configuration action and installed/client budget/native gates
+  remain open. See the [implementation ledger](milestone-10-implementation.md)
+  and [contract](milestone-10-contract.md). M10 is Active, not accepted.
+
+- 2026-11-12 — Reviewed P2-M10's remaining credential and acceptance gaps.
+  Bound helper output to the trusted destination, assigned stopped-server
+  enrollment management and config-before-grant crash ordering, and specified
+  complete saved-TV pagination with atomic startup/recovery summaries.
+  Clarified typed-command deduplication and integer RPC IDs. Separated the
+  signed corpus harness, disposable-account production helper smoke and
+  separate-host Local Network evidence in the [plan review](milestone-10-plan-review.md#further-review-credential-destinations-and-executable-acceptance).
+  M10 remains Planned; M9 acceptance and installed-client/token gates stay open.
+
 - 2026-11-12 — Continued M9 native acceptance with approved foreground access
   and a candidate server switch. “Always Allow” let the standalone helper read
   both existing API items, but the signed application still reported denied

@@ -244,6 +244,8 @@ impl Command {
 #[derive(Debug, Clone)]
 pub struct Receipt {
     pub id: OperationId,
+    /// Private recovery key, shared with the retained registry allocation.
+    pub key: Arc<String>,
     pub metadata: OperationMetadata,
     pub outcome: Option<Outcome>,
     /// Display deadline captured once at terminalization. Eviction uses only

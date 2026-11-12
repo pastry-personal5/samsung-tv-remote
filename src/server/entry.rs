@@ -20,6 +20,13 @@ pub enum Action {
 pub enum Mode {
     Gui,
     Help,
+    McpHeaders {
+        base: Option<PathBuf>,
+    },
+    McpManagement {
+        base: Option<PathBuf>,
+        action: super::mcp::management::Action,
+    },
     ApiAccess {
         request: bool,
     },
@@ -46,6 +53,52 @@ pub fn parse(arguments: &[OsString]) -> Result<Mode, LaunchError> {
     }
     if arguments.len() == 1 && arguments[0] == "--help" {
         return Ok(Mode::Help);
+    }
+    if arguments[0] == "--mcp-headers" {
+        let base = match arguments {
+            [_] => None,
+            [_, flag, base] if flag == "--fake-profile" && PathBuf::from(base).is_absolute() => {
+                Some(PathBuf::from(base))
+            }
+            _ => return Err(LaunchError::Denied),
+        };
+        return Ok(Mode::McpHeaders { base });
+    }
+    if arguments[0] == "--mcp-management" {
+        use super::mcp::management::Action as McpAction;
+        let (values, base) =
+            if arguments.len() >= 3 && arguments[arguments.len() - 2] == "--fake-profile" {
+                let base = PathBuf::from(&arguments[arguments.len() - 1]);
+                if !base.is_absolute() {
+                    return Err(LaunchError::Denied);
+                }
+                (&arguments[1..arguments.len() - 2], Some(base))
+            } else {
+                (&arguments[1..], None)
+            };
+        let action = match values {
+            [value] if value == "status" => McpAction::Status,
+            [value] if value == "prepare" => McpAction::Prepare,
+            [value, generation, key] if value == "enable" || value == "disable" => {
+                let generation = generation.to_str().ok_or(LaunchError::Denied)?;
+                let parsed: u64 = generation.parse().map_err(|_| LaunchError::Denied)?;
+                if parsed.to_string() != generation {
+                    return Err(LaunchError::Denied);
+                }
+                let key = key.to_str().ok_or(LaunchError::Denied)?;
+                let id = uuid::Uuid::parse_str(key).map_err(|_| LaunchError::Denied)?;
+                if id.hyphenated().to_string() != key {
+                    return Err(LaunchError::Denied);
+                }
+                McpAction::Change {
+                    generation: parsed,
+                    key: key.into(),
+                    enabled: value == "enable",
+                }
+            }
+            _ => return Err(LaunchError::Denied),
+        };
+        return Ok(Mode::McpManagement { base, action });
     }
     if arguments[0] == "--server-api-access" {
         return match arguments.get(1).and_then(|argument| argument.to_str()) {
@@ -116,7 +169,8 @@ pub fn parse(arguments: &[OsString]) -> Result<Mode, LaunchError> {
     })
 }
 /// None selects GUI composition; management commands return
-/// sanitized status only. API and pairing secrets are never printed.
+/// sanitized status only. The dedicated MCP header mode intentionally emits
+/// one client Authorization object; TV pairing secrets are never printed.
 pub fn dispatch(arguments: &[OsString]) -> Option<i32> {
     let mode = match parse(arguments) {
         Ok(Mode::Gui) => return None,
@@ -126,6 +180,71 @@ pub fn dispatch(arguments: &[OsString]) -> Option<i32> {
             return Some(1);
         }
     };
+    if let Mode::McpHeaders { base } = mode {
+        let Ok(executable) = std::env::current_exe() else {
+            return Some(1);
+        };
+        let profile = base.map_or(
+            super::profile::Profile::Control,
+            super::profile::Profile::Development,
+        );
+        let destination = std::env::var("CLAUDE_CODE_MCP_SERVER_URL").unwrap_or_default();
+        let runtime = match tokio::runtime::Builder::new_multi_thread()
+            .worker_threads(2)
+            .enable_all()
+            .build()
+        {
+            Ok(runtime) => runtime,
+            Err(_) => return Some(1),
+        };
+        let result = runtime.block_on(super::mcp::helper::headers(
+            profile,
+            executable,
+            destination,
+        ));
+        // A timed-out read-only preflight may still own a blocking worker.
+        // Do not let Runtime::drop extend Claude's helper execution deadline.
+        runtime.shutdown_background();
+        return Some(match result {
+            Ok(headers) => {
+                println!("{headers}");
+                0
+            }
+            Err(error) => {
+                eprintln!("{}", json!({"error":error.code()}));
+                1
+            }
+        });
+    }
+    if let Mode::McpManagement { base, action } = mode {
+        let Ok(executable) = std::env::current_exe() else {
+            return Some(1);
+        };
+        let profile = base.map_or(
+            super::profile::Profile::Control,
+            super::profile::Profile::Development,
+        );
+        let runtime = match tokio::runtime::Builder::new_multi_thread()
+            .worker_threads(2)
+            .enable_all()
+            .build()
+        {
+            Ok(runtime) => runtime,
+            Err(_) => return Some(1),
+        };
+        let result = runtime.block_on(super::mcp::management::run(profile, executable, action));
+        runtime.shutdown_background();
+        return Some(match result {
+            Ok(summary) => {
+                println!("{summary}");
+                0
+            }
+            Err(error) => {
+                eprintln!("{}", json!({"error":error.code()}));
+                1
+            }
+        });
+    }
     if let Mode::ApiAccess { request } = mode {
         // A single foreground maintenance call, before Tokio, Iced, profile
         // access or server composition. Never reached by automatic recheck.

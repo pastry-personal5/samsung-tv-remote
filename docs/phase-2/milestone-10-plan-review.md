@@ -7,7 +7,8 @@ service queries, wire decoders and executable documentation fixtures, M6's
 corpus budgets, and M9's implemented but unaccepted signed production cutover.
 Re-reviewed the transport and client contracts against primary documentation
 and the current service/access/bootstrap code. No predecessor exception is
-granted. This pass changes only M10 planning and the phase decision log.
+granted. This pass changes only M10 planning, the phase decision log and the
+documentation index.
 
 ## Findings and corrections
 
@@ -50,13 +51,46 @@ These are implementation requirements, not evidence of implemented enrollment,
 permit transfer or installed client behavior. The selected protocol revision,
 15-tool scope and predecessor gates remain unchanged.
 
+## Further review: credential destinations and executable acceptance
+
+Reviewed the remaining contracts against `server/launch.rs`,
+`server/lifecycle/endpoint.rs`, `server/profile.rs`, `server/process.rs`,
+`application/control_service.rs` and the current corpus. The architecture and
+overview now address these additional gaps:
+
+| Priority | Finding | Plan correction |
+| --- | --- | --- |
+| High | Authenticating the helper's bootstrap peer does not establish where Claude sends the returned Authorization header. A copied entry could retain the helper command while changing its URL. | Compare `CLAUDE_CODE_MCP_SERVER_URL` with the trusted manifest destination before bootstrap and header output; reject missing/different destinations and disable redirects in authenticated probes. Add copied-entry and manifest-race tests. |
+| High | An authenticated GUI HTTP route cannot persist Disconnect while the server is absent or intentionally stopped. Direct GUI storage access would violate M9's boundary. | Assign a protected same-executable offline management mode, serialized with owner/enrollment state, plus the live authenticated route. Preserve Stop and expose incomplete live lease invalidation. |
+| High | Fresh Connect could grant access before a failing configuration write; a leftover entry could later be mistaken for enrollment consent. | Save the intended entry before enabling a fresh grant, retain disabled state on grant failure and require explicit repair. Freeze crashes and concurrent Connect/Disconnect transitions; preserve unchanged enabled enrollment on repair failure. |
+| High | Installed fake-effect acceptance had no executable production composition. `Profile::Control` fixes real adapters/storage, while `--fake-profile` selects development trust. | Separate a signed isolated corpus harness, actual production helper/client smoke in a disposable account, and separate-host native consent review. Assign fixture preparation before implementation; no production profile override or owner-data test shortcut. |
+| Medium | A bounded `list_tvs` plus single-ID `inspect_tv` cannot enumerate saved targets omitted from the first summary. Pagination tied to every global event could become perpetually stale. | Add list page controls, deterministic ordering, selected context outside pages and bounded cursors tied to relevant saved-list changes. Reconcile the new projection arguments with the corpus in slice 1. |
+| Medium | Compact list output could make blocked storage look like an empty profile or combine guards from different snapshots. | Retain startup/admission/recovery facts even with zero rows; derive list/inspect guards and facts from one tagged snapshot. |
+| Medium | Comparing raw MCP input would make harmless RPC metadata, response preferences or JSON ordering conflict with the retained service command. | Use the canonical shared typed command for deduplication; test cross-route equivalence, changed confirmations and refreshed authentication/new RPC IDs. |
+| Medium | “Numeric IDs” did not distinguish MCP's integer IDs from fractional or null JSON-RPC IDs. | Explicitly accept strings/integers and reject fractional/null IDs in framing fixtures. |
+
+The destination check is an application credential-release requirement derived
+from [Claude Code's documented helper URL environment](https://code.claude.com/docs/en/mcp#use-dynamic-headers-for-custom-authentication),
+not a claim that Claude enforces this binding for custom helpers. The
+[MCP request contract](https://modelcontextprotocol.io/specification/2026-07-28/basic/index#requests)
+requires string or integer IDs. No new auth mode or protocol revision is added.
+
+The [acceptance topology](milestone-10-architecture.md#acceptance-topology)
+keeps all nine actual-client measurements and all-tool parity, and retains
+production helper and Local Network gates independently. Existing same-Mac M9
+fixture evidence cannot accept separate-host consent. A missing disposable
+account/fixture remains a delivery blocker, not a reason to weaken the gate.
+
 ## Remaining decisions before implementation
 
 Slice 1 must record exact protocol status/error fixtures and validation order,
 final input/output schemas and annotations, concrete page/string/metadata
 limits and cache TTLs, pool/waiter accounting, discovery fast-path timing and
-the target CLI/runtime version. The architecture now supplies the transport
-error seed matrix, existing request pool sizes and waiter ceiling. The
+the target CLI/runtime version. Also freeze saved-list page/cursor arguments,
+the enrollment/config/credential transition table, stopped-server management
+ownership, and concrete harness/account/fixture launch topology. The architecture
+now supplies the transport error seed matrix, existing request pool sizes and
+waiter ceiling. The
 per-tool freeze record must name exact service mappings and test ownership.
 These are deliverables, not claims that M8 already supports them. The chosen
 revision remains `2026-07-28`; any compatibility fallback needs a separate
@@ -122,3 +156,21 @@ No source, corpus schema, client configuration or signed artifact was changed
 by this review. Concurrent Makefile edits are outside its scope. Full Cargo
 checks were not run and remain required before a PR; this review does not
 accept M10 delivery.
+
+## Further review validation
+
+Delegated validation for these planning corrections passed:
+
+- `cargo test --test control_documentation` — three tests passed.
+- `python3 scripts/measure_mcp_corpus.py --wire-fixtures` — valid fixtures.
+- `python3 scripts/measure_mcp_corpus.py` — all nine scenarios and 15 tools;
+  catalog/instruction 2,136 and Pair upfront 3,036 proxy units. Existing budget
+  overruns remain open; the new pagination projection is still a slice-1
+  schema/corpus deliverable and is not measured by these unchanged fixtures.
+- `git diff --check` — clean.
+- Local Markdown link/anchor check — all five edited documents resolved.
+
+This pass changes documentation only; no MCP implementation, account setup,
+enrollment, configuration write, signed-client run or actual model-token
+measurement was performed. Full Cargo checks were not rerun and remain
+required before a PR. M10 remains Planned.

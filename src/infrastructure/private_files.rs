@@ -84,6 +84,13 @@ enum ReplaceStage {
     Committed,
 }
 impl OwnershipLock {
+    /// The duplicate shares flock's open file description, retaining ownership
+    /// while an admitted management worker finishes after its HTTP task closes.
+    pub(crate) fn try_clone(&self) -> Result<Self, FileError> {
+        Ok(Self {
+            _file: self._file.try_clone().map_err(|_| FileError::Unavailable)?,
+        })
+    }
     pub(crate) fn raw_fd(&self) -> std::os::fd::RawFd {
         self._file.as_raw_fd()
     }

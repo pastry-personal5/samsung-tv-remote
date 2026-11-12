@@ -1,6 +1,6 @@
 # P2-M10: Streamable HTTP MCP
 
-Status: Planned
+Status: Active
 
 ## Goal
 
@@ -27,7 +27,9 @@ the background server's `/mcp` Streamable HTTP endpoint.
 Planning uses M6's contract, the completed M7 runtime and
 [M8's accepted isolated API/client/lifecycle handoff](milestone-08-review.md).
 M9's signed production cutover remains unaccepted; M8 fake-process evidence does
-not accept an installed MCP server. M10 remains Planned.
+not accept an installed MCP server. The owner's instruction to complete M10
+authorizes implementation ahead of that acceptance, as recorded in the
+[phase plan](phase-2.md); dependent production gates remain required.
 
 Reuse M8's frozen command/query boundary, ID/counter codecs, stable identity,
 private lookup, limits and protected attach/Stop contract. Freeze the proposed
@@ -40,21 +42,24 @@ phase-plan exception; planning does not grant one.
 Target only `2026-07-28` initially, as selected by M6. Recheck the installed
 Claude Code version against the real endpoint. The helper reuses the chosen
 same-executable signed bundle and M8 bootstrap; MCP cannot Resume or replace
-a server. No client configuration changes are part of planning.
+a server. Client configuration installation remains an explicit opt-in action.
 
 ## Delivery order
 
 1. Freeze predecessor contracts, the protocol status/metadata matrix, shared
    pool allocation and the proposed 15-tool schemas/service mappings. Verify
    the isolated target CLI/runtime and header-helper compatibility early.
+   Freeze the stopped-server enrollment path, config/grant crash transitions
+   and separate corpus, production-helper and native-permission test lanes.
 2. Implement authenticated revision discovery, JSON-RPC framing, deterministic
    catalog/schema and read-only tools against fake ports.
 3. Add typed mutations and compact outcomes; prove confirmation, deduplication,
    cancellation and cross-client selection behavior.
 4. Implement the signed header-helper mode and opt-in GUI connection action,
    with isolated configuration tests before installed-client review.
-5. Run signed Claude Code smoke/workflow tests, measure actual context/calls
-   with tool search on/off, then write a completion review and M11 handoff.
+5. Run production signed Claude Code smoke tests and isolated client corpus
+   workflows, measure actual context/calls with tool search on/off, then write
+   a completion review and M11 handoff.
 
 The architecture assigns boundaries and evidence to these slices. No new
 source/app/text-input features, generic executor, remote hosting, OAuth
@@ -99,6 +104,9 @@ service, login registration or Claude Desktop integration is included.
   and cancelling lookup cannot cancel a TV effect.
   Saved-target and operation-result detail/pages are reachable through the
   frozen catalog, preserving complete guards, recovery markers and expiry.
+  `list_tvs` enumerates every saved target through bounded pages, keeps selected
+  context outside the page and distinguishes blocked/restoring startup from
+  a healthy empty profile. List/inspect preconditions come from atomic snapshots.
 - [ ] The negotiated MCP revision's cache and structured-result rules are
   tested. Compare terse text with structured-plus-compatible-text results in
   the actual client; do not assume structured output or HTTP compression
@@ -118,6 +126,9 @@ service, login registration or Claude Desktop integration is included.
   retry after header refresh. Concurrent helpers reuse the current credential
   and MCP identity. Multiple Claude sessions share that identity's quotas and
   private lookup scope; conversation isolation is not claimed.
+  The helper compares Claude's destination URL with the trusted manifest before
+  returning a bearer; a copied/changed entry cannot redirect credential output
+  to another endpoint. Verification probes never follow redirects.
 - [ ] Connect reports configuration saved and endpoint verified separately;
   attachment by the actual client has separate evidence.
   Disconnect removes only the unchanged app entry and revokes MCP access;
@@ -127,19 +138,28 @@ service, login registration or Claude Desktop integration is included.
   Disconnect affects all MCP sessions and preserves already admitted effects.
   Partial installation/removal, writer conflicts and app relocation have tested repair
   paths. GUI control stays usable.
+  Enrollment management works with the server absent or intentionally stopped,
+  through protected ownership-serialized management, without clearing Stop.
+  Failed configuration writes cannot create a fresh grant; a saved entry alone
+  cannot enable enrollment after a crash. Incomplete live revocation is visible.
 - [ ] Protocol tests and a Claude Code smoke test cover `tools/list`, one
-  read tool, and one mutating tool against a fake TV through the installed
-  server and documented HTTP configuration, with the GUI closed and the
-  server initially absent. All nine current M6 corpus scenarios run in both
-  tool-search modes, with additional all-tool/re-pair/cleanup parity tests.
-  Evidence names the actual signed executable/profile/composition; fake
-  development mode cannot satisfy production-helper or OS permission gates.
+  read tool, and one mutating tool against a synthetic Samsung endpoint through
+  the installed production server and documented HTTP configuration, with the
+  GUI closed and server initially absent in a disposable macOS account.
+  All nine current M6 corpus scenarios run in both tool-search modes in an
+  isolated client harness, with additional all-tool/re-pair/cleanup parity tests.
+  The [acceptance topology](milestone-10-architecture.md#acceptance-topology)
+  assigns executable/profile/composition and fixture preparation to each lane;
+  fake development mode cannot satisfy production-helper or OS permission gates.
 
 ## Plan review
 
 The [2026-11-12 plan review](milestone-10-plan-review.md) records corrected
 contracts and implementation gates. This is documentation review only; it
 does not accept protocol, signed-client or token-budget evidence.
+The [implementation contract](milestone-10-contract.md) and
+[implementation ledger](milestone-10-implementation.md) track the active work
+and evidence without treating the planning review as delivery acceptance.
 
 ## References
 

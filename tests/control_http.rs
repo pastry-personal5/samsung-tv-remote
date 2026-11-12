@@ -1,4 +1,6 @@
 //! Real loopback HTTP, isolated files and fake TV/credential/Wake boundaries.
+#[path = "support/mcp_http.rs"]
+mod mcp;
 #[path = "support/storage_faults.rs"]
 mod storage_faults;
 use bytes::Bytes;
@@ -58,6 +60,8 @@ struct Effects {
     connect_returned: AtomicUsize,
     wake_wait: std::sync::atomic::AtomicBool,
     wake_release: tokio::sync::Notify,
+    wake_after_send_wait: std::sync::atomic::AtomicBool,
+    wake_after_send_release: tokio::sync::Notify,
     wake_returned: AtomicUsize,
 }
 #[derive(Clone)]
@@ -249,6 +253,9 @@ impl WakeTransport for Ports {
                 effects.packets.fetch_add(1, Ordering::SeqCst);
                 Ok(())
             });
+            if effects.wake_after_send_wait.load(Ordering::SeqCst) {
+                effects.wake_after_send_release.notified().await;
+            }
             effects.wake_returned.fetch_add(1, Ordering::SeqCst);
             result
         })

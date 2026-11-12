@@ -35,6 +35,7 @@ fn receipt(outcome: Option<Outcome>) -> Receipt {
         })
     });
     Receipt {
+        key: std::sync::Arc::new("test-receipt-key".into()),
         id: OperationId(1),
         metadata: OperationMetadata {
             epoch: Epoch::from_u128(7),

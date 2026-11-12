@@ -1,12 +1,14 @@
 # P2-M10: Streamable HTTP MCP
 
-Status: Planned
+Status: Active
 
 ## Baseline and entry contract
 
 M7 supplies the headless service. M8's [completion review](milestone-08-review.md)
 and [wire decisions](milestone-08-wire.md) identify implemented shared access,
-HTTP, lifecycle and client modules. `server/mod.rs` has no MCP adapter. M9's
+HTTP, lifecycle and client modules. The initial MCP adapter now enters the
+existing `HttpAdapter`; the [implementation contract](milestone-10-contract.md)
+records its frozen transport/service choices and remaining work. M9's
 GUI/signed production cutover remains a separate gate; the fake development
 profile cannot be promoted to production.
 
@@ -169,8 +171,9 @@ parse/framing/media-type cases before accepting slice 1:
 
 For overlapping errors freeze validation order and response ID behavior;
 do not reuse `/v1`'s application error body as JSON-RPC. Cover valid string
-and numeric IDs, malformed JSON, batch/response bodies, duplicate envelope
-members, encoded header values and both required Accept media types. No
+and integer IDs, reject null/fractional IDs, and test malformed JSON,
+batch/response bodies, duplicate envelope members, encoded header values and
+both required Accept media types. No
 client notifications are supported in this core revision: reject notification
 POSTs without admission, especially a `tools/call` missing its ID. If a future
 notification is accepted, return 202 with no body. Do not require legacy
@@ -204,8 +207,11 @@ M8 currently classifies query reservations by HTTP GET. MCP uses POST for
 reads too: classify a validated RPC/tool by its catalog semantics before
 dispatch, never by unverified `Mcp-Method`/`Mcp-Name` alone. Bounded parsing
 also needs an ingress reservation. Preserve the existing 128-connection and
-64-request aggregate ceilings (52 ordinary, eight query, four management;
-per identity ten/four/two). MCP gets no management tools. Long lookup waits
+64-request aggregate ceiling. The [implementation contract](milestone-10-contract.md)
+carves classification out of ordinary capacity: 48 execution/four classification,
+eight query/four management globally; eight/two/four/two per identity. This
+preserves the former ordinary-plus-classification allowance of 52/ten rather
+than adding requests. MCP gets no management tools. Long lookup waits
 may hold at most four global/two per-identity query reservations, leaving
 immediate reads available; these are subsets of the existing query pools.
 Hold reservations through final response flush/drop. Test mixed `/v1` and
@@ -275,8 +281,8 @@ metadata must not become a blanket unknown-argument rejection.
 
 | Tool | Shared service behavior and guards |
 | --- | --- |
-| `list_tvs` | Saved-TV summary, selected target, current epoch/generation; no TV network access. |
-| `inspect_tv` | One saved target's full configuration, config revision, readiness and recovery facts; no physical-state inference. |
+| `list_tvs` | Paginated saved-TV summary, selected target, atomic epoch/revision/generation and startup/admission/recovery state; no TV network access. |
+| `inspect_tv` | One saved target's full configuration, config revision, readiness and recovery facts from one epoch/revision-tagged snapshot; no physical-state inference. |
 | `discover_tvs` | Bounded discovery with client-bound expiring candidates. |
 | `probe_tv` | Validated host with optional bound candidate handle; fresh certificate observation. |
 | `pair_tv` | First Pair/re-pair with observed target, full matching pin, generation and explicit recovery variant where applicable. |
@@ -312,6 +318,26 @@ schemas. A discovery receipt's operation ID is the lookup anchor; pagination
 must not rerun discovery/probe or extend candidate/observation expiry. Never
 truncate a host, scoped ID, fingerprint or confirmation value that a later
 call must echo. Label previews may be shortened with explicit truncation.
+
+`inspect_tv` cannot make an omitted TV discoverable unless its ID is known.
+Give `list_tvs` optional bounded page controls and deterministic device-ID
+ordering so every saved target is reachable. Keep selected-TV context outside
+the page, including when that TV is absent from the page. Bind cursors to the
+principal, epoch, query and saved-list/configuration revision; reject tampering,
+cross-query use and stale pages with a restart-list instruction. Use a relevant
+list revision or bounded captured snapshot, not every connection/Wake event,
+so routine state traffic cannot prevent enumeration. Freeze cursor lifetime
+and memory bounds; do not retain unbounded per-client snapshots. These are new
+projection arguments to reconcile with the corpus in slice 1, not existing
+M8 wire fields.
+
+List/inspect guards and facts must come from one service snapshot, never
+separate reads of epoch, selection and configuration. Preserve startup blocked,
+restoring, draining, admission-closed and cleanup-required facts in the default
+summary even when there are no rows. A storage failure is not a healthy empty
+profile. State whether a missing target is absent or cannot yet be inspected.
+Keep available exact recovery guards in `inspect_tv`; summaries must point to
+that detail instead of encouraging fresh Pair/Forget on a blocked profile.
 
 The corpus remains a proposed MCP projection, not an installed adapter. M8's
 schema reconciliation is now executable in `tests/control_documentation.rs`:
@@ -349,6 +375,15 @@ Same key/same request resolves the retained operation; changed arguments
 conflict. Preserve known-duplicate behavior at capacity. Revocation before
 admission prevents effects even if validation previously succeeded. A refreshed
 bearer cannot turn an old key into a new operation.
+
+Deduplication compares the shared typed service command, not the JSON-RPC
+envelope, request ID, `_meta`, bearer or response-format preferences. Normalize
+arguments through the same decoder/default rules used by `/v1`. If a tool
+offers a post-admission wait/projection preference, keep it outside the command
+fingerprint: changing only that preference must recover the same operation.
+Changed target, action, confirmation or preconditions still conflict. Test
+cross-route same-key equivalence and conflict under the same MCP principal,
+as well as auth refresh with a new RPC ID and reordered JSON members.
 
 All mutations return an operation receipt by default. Discover/probe may
 include an already available terminal observation or use a bounded read-only
@@ -400,8 +435,18 @@ an active Claude session. Explicit reconfiguration requires reconnection.
 Helper stdout is only header JSON; errors use nonzero exit and sanitized
 stderr. No bearer is stored in files, arguments, environment or logs. Validate
 context against trusted installation/bootstrap state, not caller URL/name or
-working directory. Avoid shell lookup of an untrusted executable. The documented
-helper timeout is ten seconds. Use a shorter end-to-end
+working directory. Also require `CLAUDE_CODE_MCP_SERVER_URL` to equal the
+trusted manifest's literal `http://127.0.0.1:<port>/mcp` destination before
+bootstrap and again before emitting a bearer. The environment value is a
+comparison input, never authority to choose a profile or endpoint. Reject a
+missing value, another port/host/path, userinfo, query or fragment; the
+server-name variable alone cannot authorize credential release. This binds
+the credential to the destination where Claude will send the returned header.
+Authenticated helper/verification probes must not follow redirects. Test a
+copied helper entry pointed at an external URL or another loopback listener
+and a changed manifest during startup; failures emit no header. Diagnostic
+inspection uses a separate token-free mode. Avoid shell lookup of an untrusted
+executable. The documented helper timeout is ten seconds. Use a shorter end-to-end
 monotonic deadline covering bootstrap, launch and readiness, with no unattended
 credential-prompt loop. Concurrent helpers must converge on the same launch
 and stable MCP identity. A timeout must not clear Stop, kill a valid server or
@@ -471,6 +516,30 @@ that the selected writer actually honors: atomic rename alone prevents a torn
 file, not a lost concurrent update. If the CLI offers no such protection,
 freeze an explicit conflict/repair strategy before reporting installation safe.
 
+Enrollment management must also work when no server exists or intentional
+Stop is set. Assign a protected same-executable management mode for that
+case, serialized with server ownership and the durable enrollment transition;
+use authenticated GUI management while a compatible owner is live. A race
+must re-evaluate ownership rather than let two writers publish enrollment.
+Neither path starts TV adapters, clears Stop or grants MCP management rights.
+The GUI uses a typed management client and never edits enrollment/storage
+directly. Fail closed on corrupt/unreadable enrollment state. If a live owner
+cannot acknowledge lease invalidation, report revocation pending rather than
+claiming all active sessions are fenced. Freeze these paths in slice 1;
+an HTTP route alone cannot manage a stopped server.
+
+For fresh enrollment/regrant, validate client support and resolve/persist the
+stable endpoint manifest under protected ownership before saving the entry.
+If Stop is set and no manifest exists, endpoint preparation must preserve Stop
+and construct no TV runtime. Save the intended entry before enabling the new
+enrollment. A failed config write must
+not create a fresh grant; a saved entry with a failed grant remains disabled
+and repairable. Crash recovery never promotes such an entry to enabled merely
+because it exists. A failed repair of an already enabled, unchanged enrollment
+preserves that enrollment; identical Connect does not rotate its bearer.
+Record the durable state/config/credential transition table and crash points,
+including concurrent Connect/Disconnect and stale GUI management completions.
+
 Test GUI-spawned and Claude-spawned launches for macOS Local Network
 responsible-code attribution and denial/recovery. Fake TVs prove protocol
 behavior but cannot prove OS consent attribution. Record signed identity,
@@ -481,11 +550,11 @@ evidence format.
 
 | Slice | Reviewable deliverable | Required evidence |
 | --- | --- | --- |
-| 1. Handoff/schema freeze | Accepted shared interfaces, catalog mappings and limits | Per-tool freeze record, normative protocol matrix, isolated CLI/runtime/helper compatibility and explicit predecessor blockers. |
+| 1. Handoff/schema freeze | Accepted shared interfaces, catalog mappings and limits | Per-tool freeze record, normative protocol matrix, isolated CLI/runtime/helper compatibility, enrollment transition table, executable test topology and explicit predecessor blockers. |
 | 2. Protocol/catalog/reads | Routing, discovery, deterministic schemas, list/inspect/lookup | Proposed `tests/mcp_protocol.rs` and `tests/mcp_catalog.rs`: framing/version/status matrix, private cache and schema/result conformance. |
 | 3. Mutations/outcomes | Typed adapter and compact results | Proposed `tests/mcp_tools.rs`: all-tool fake-service parity and fake-TV one-write/packet, stale selection, expiry and partial-cleanup evidence. |
 | 4. Connection/helper | Signed helper composition and opt-in GUI Connect/Disconnect | Proposed `tests/mcp_connection.rs`: isolated config preservation/conflicts/quoting, removal/regrant, Stop, absent server, hostile peer, crash, rotation and retry. |
-| 5. Installed acceptance | Signed client connection, corpus report and review | GUI closed/server absent: discover/list, read and mutation through fake TV; all nine current corpus scenarios in both search modes, plus signed Local Network review. |
+| 5. Installed acceptance | Signed client connection, corpus report and review | Production helper/client smoke with GUI closed/server absent; all nine corpus scenarios in both search modes in the isolated client harness below, plus signed Local Network review. |
 
 Cross-client tests race GUI selection against MCP admission, edit Wake config
 after admission, cancel/disconnect lookup while an effect runs, and rotate or
@@ -504,6 +573,27 @@ which effect ports are fake and which bootstrap/credential paths are real.
 Development-mode trust cannot stand in for production helper verification.
 Do not alter the live Claude configuration or owner profile for an automated
 test; model/client runs need an isolated test entry and sanitized fixtures.
+
+### Acceptance topology
+
+Freeze the launch command, executable, namespace, config directory and effect
+ports for each lane before claiming installed coverage:
+
+| Lane | Required composition and claim |
+| --- | --- |
+| Protocol/parity/corpus | Isolated service with fake TV/storage/clock fault boundaries; actual Claude client against a signed test harness for all nine corpus measurements in both search modes. Exercise all 15 tools and cleanup failures. The harness uses a distinct test namespace/credentials and proves no production-helper or OS permission gate. |
+| Production helper/client | Actual installed signed executable and fixed production bootstrap, API credential and enrollment paths in a disposable macOS account. No `--fake-profile` or caller-selected production root. With GUI closed/server absent, use the token-free user entry for discovery/catalog, a read and a mutation against a synthetic Samsung endpoint. Verify first enrollment, Stop, Disconnect and explicit regrant. |
+| macOS permission | Production composition against a separate controlled LAN fixture, following the [M9 native fixture constraints](milestone-09-native-fixture.md). Same-Mac/loopback success does not establish Local Network attribution or denial/recovery. |
+
+The existing `Profile::Control` fixes storage and real effect adapters;
+`--fake-profile` selects development trust. Neither provides a production-trust,
+fake-effect composition today. Assign any needed harness/fixture preparation
+explicitly in slice 1 rather than adding a production profile override or
+quietly using the owner's data. Compare harness catalog/results with production
+projections so measured schemas and result channels match the shipped endpoint.
+Reuse M9 native evidence only for unchanged paths; Claude-launched attribution
+still requires its own evidence. An unavailable disposable account or separate
+LAN fixture leaves that lane open and M10 unaccepted until its gates pass.
 
 Re-run the [M6 corpus proxy](milestone-06-mcp-budget.md) after schema changes.
 Actual client gates remain: catalog/instruction ≤1,900 tokens, ordinary receipt

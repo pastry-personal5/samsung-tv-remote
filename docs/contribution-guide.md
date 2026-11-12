@@ -199,8 +199,10 @@ Stop persists before its durable acknowledgment. A lost reply may report
 prove drain finished. Definite persistence failures remain errors. Ordinary
 start/reopen remains stopped until explicit GUI Resume. An incompatible live build requires explicit restart;
 occupied ports fail without reallocating. `--server` runs the same fake
-composition in the foreground; no mode starts at login. Credentials never
-appear in command output. A profile added through fake Pairing survives restart
+composition in the foreground; no mode starts at login. Management commands
+never print credentials. The separate M10 `--mcp-headers` mode is intentionally
+limited to one MCP Authorization JSON object for Claude's dynamic header pipe;
+never redirect that output to a file or include it in diagnostics. A profile added through fake Pairing survives restart
 with synthetic presence markers in its distinct credential directory.
 
 The debug GUI probe supports renderer-only capture without desktop access:

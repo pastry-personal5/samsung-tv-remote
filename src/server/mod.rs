@@ -7,6 +7,7 @@ pub mod development;
 pub mod entry;
 pub mod launch;
 pub mod lifecycle;
+pub mod mcp;
 pub mod process;
 pub mod production;
 pub mod profile;

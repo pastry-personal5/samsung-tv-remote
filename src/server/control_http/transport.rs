@@ -33,12 +33,17 @@ use super::{
 };
 use crate::application::control_service::*;
 use crate::server::access::{AccessError, AccessGate, AuthorizedClient};
+use crate::server::mcp::enrollment::{Enrollment, EnrollmentError};
+use crate::server::mcp::{self, protocol::Reply as McpReply};
 
 pub const MAX_CONNECTIONS: usize = 128;
 pub const MAX_HEADERS: usize = 16 * 1024;
 pub const MAX_ORDINARY: usize = 64;
 pub const MAX_PER_CLIENT: usize = 16;
-pub const MAX_MUTATIONS_PER_CLIENT: usize = MAX_PER_CLIENT - 6;
+// Classification is a subset of ordinary capacity, not a second request pool.
+pub const MAX_CLASSIFY: usize = 4;
+pub const MAX_CLASSIFY_PER_CLIENT: usize = 2;
+pub const MAX_MUTATIONS_PER_CLIENT: usize = MAX_PER_CLIENT - 8;
 type Body = UnsyncBoxBody<Bytes, io::Error>;
 type HttpResponse = Response<Body>;
 type RequestReservation = Arc<(OwnedSemaphorePermit, OwnedSemaphorePermit)>;
@@ -61,7 +66,10 @@ pub struct HttpAdapter {
     ordinary: Arc<Semaphore>,
     queries: Arc<Semaphore>,
     management: Arc<Semaphore>,
-    clients: HashMap<ClientId, [Arc<Semaphore>; 3]>,
+    classification: Arc<Semaphore>,
+    clients: HashMap<ClientId, [Arc<Semaphore>; 4]>,
+    mcp: mcp::Adapter,
+    enrollment: Option<Arc<Enrollment>>,
 }
 impl HttpAdapter {
     pub fn new(
@@ -79,6 +87,7 @@ impl HttpAdapter {
                         Arc::new(Semaphore::new(MAX_MUTATIONS_PER_CLIENT)),
                         Arc::new(Semaphore::new(4)),
                         Arc::new(Semaphore::new(2)),
+                        Arc::new(Semaphore::new(MAX_CLASSIFY_PER_CLIENT)),
                     ],
                 )
             })
@@ -88,11 +97,18 @@ impl HttpAdapter {
             services: services.into_iter().collect(),
             stop,
             build,
-            ordinary: Arc::new(Semaphore::new(MAX_ORDINARY - 12)),
+            ordinary: Arc::new(Semaphore::new(MAX_ORDINARY - 12 - MAX_CLASSIFY)),
             queries: Arc::new(Semaphore::new(8)),
             management: Arc::new(Semaphore::new(4)),
+            classification: Arc::new(Semaphore::new(MAX_CLASSIFY)),
             clients,
+            mcp: mcp::Adapter::default(),
+            enrollment: None,
         }
+    }
+    pub fn with_enrollment(mut self, enrollment: Arc<Enrollment>) -> Self {
+        self.enrollment = Some(enrollment);
+        self
     }
 
     /// The composition owns listener and runtime lifetimes independently.
@@ -191,16 +207,29 @@ impl HttpAdapter {
         invalid_framing: Arc<AtomicBool>,
         reserved: watch::Sender<Option<RequestReservation>>,
     ) -> HttpResponse {
+        let is_mcp = request.uri().path() == "/mcp";
+        let reject = |error: ErrorCode| {
+            if is_mcp {
+                mcp_response(McpReply::error(
+                    error.status,
+                    None,
+                    -32600,
+                    "HTTP request rejected",
+                ))
+            } else {
+                failure(error)
+            }
+        };
         let client = match self
             .access
             .authorize(peer, request.uri(), request.headers())
         {
             Ok(client) => client,
-            Err(e) => return failure(access_error(e)),
+            Err(e) => return reject(access_error(e)),
         };
         let _ = authorized.send(Some(client.clone()));
         if invalid_framing.load(Ordering::Acquire) {
-            return failure(code(400, "ambiguous_framing"));
+            return reject(code(400, "ambiguous_framing"));
         }
         let result = timeout(
             Duration::from_secs(15),
@@ -208,12 +237,12 @@ impl HttpAdapter {
         )
         .await;
         if !client.admission.is_active() {
-            return failure(code(401, "unauthenticated"));
+            return reject(code(401, "unauthenticated"));
         }
         match result {
             Ok(Ok(response)) => response,
-            Ok(Err(e)) => failure(e),
-            Err(_) => failure(code(503, "request_timeout")),
+            Ok(Err(e)) => reject(e),
+            Err(_) => reject(code(503, "request_timeout")),
         }
     }
 
@@ -255,13 +284,18 @@ impl HttpAdapter {
         streaming: watch::Sender<bool>,
         reserved: watch::Sender<Option<RequestReservation>>,
     ) -> Result<HttpResponse, ErrorCode> {
+        // Bound MCP waiting by the original request, including body parsing.
+        let mcp_deadline = Instant::now() + Duration::from_secs(14);
         if request.version() != Version::HTTP_11 {
             return Err(code(400, "http_version_unsupported"));
         }
         let path = request.uri().path().to_owned();
         let query = request.uri().query().map(str::to_owned);
         let method = request.method().clone();
-        let management = path == "/v1/server/stop";
+        let management = matches!(
+            path.as_str(),
+            "/v1/server/stop" | "/v1/mcp" | "/v1/mcp/enrollment"
+        );
         if management {
             client.require_management().map_err(access_error)?;
         }
@@ -269,6 +303,122 @@ impl HttpAdapter {
             .services
             .get(&client.identity)
             .ok_or(code(403, "forbidden"))?;
+        if matches!(path.as_str(), "/v1/mcp" | "/v1/mcp/enrollment") {
+            no_query(&query)?;
+            let enrollment = self
+                .enrollment
+                .as_ref()
+                .ok_or(code(503, "mcp_enrollment_unavailable"))?
+                .clone();
+            let slots = Arc::new(self.slots(client.identity, false, true)?);
+            reserved
+                .send(Some(slots))
+                .map_err(|_| code(503, "server_stopping"))?;
+            let result = match (method.as_str(), path.as_str()) {
+                ("GET", "/v1/mcp") => {
+                    empty_body(request).await?;
+                    tokio::task::spawn_blocking(move || enrollment.status_summary()).await
+                }
+                ("POST", "/v1/mcp/enrollment") => {
+                    let body = read_body(request, true).await?;
+                    let current = service.snapshot().await.map_err(response::service_error)?;
+                    let (key, generation, enabled) =
+                        request::parse_mcp_enrollment(&body, current.epoch)
+                            .map_err(request_error)?;
+                    let client = client.clone();
+                    // Enrollment retains a duplicate of profile ownership. A
+                    // dropped HTTP future cannot release the lock under this
+                    // blocking durable transition or cancel an admitted grant.
+                    tokio::task::spawn_blocking(move || {
+                        enrollment
+                            .change_authorized(&client, generation, &key, enabled)
+                            .map(|record| record.summary())
+                    })
+                    .await
+                }
+                _ => return Err(code(405, "method_not_allowed")),
+            };
+            let value = result
+                .map_err(|_| code(503, "mcp_management_failed"))?
+                .map_err(enrollment_error)?;
+            return Ok(json_response(200, value));
+        }
+        if path == "/mcp" {
+            no_query(&query)?;
+            if method != Method::POST {
+                let mut response = mcp_response(McpReply::error(405, None, -32600, "Use POST"));
+                response
+                    .headers_mut()
+                    .insert("allow", "POST".parse().expect("static method"));
+                return Ok(response);
+            }
+            if client.capability == crate::server::access::Capability::Readiness {
+                return Err(code(403, "forbidden"));
+            }
+            if !mcp::protocol::accepts_json_and_events(request.headers()) {
+                return Ok(mcp_response(McpReply::error(
+                    406,
+                    None,
+                    -32600,
+                    "Accept JSON and event-stream responses",
+                )));
+            }
+            let global = self
+                .classification
+                .clone()
+                .try_acquire_owned()
+                .map_err(|_| code(429, "busy"))?;
+            let per = self
+                .clients
+                .get(&client.identity)
+                .ok_or(code(403, "forbidden"))?[3]
+                .clone()
+                .try_acquire_owned()
+                .map_err(|_| code(429, "busy"))?;
+            reserved
+                .send(Some(Arc::new((global, per))))
+                .map_err(|_| code(503, "server_stopping"))?;
+            let headers = request.headers().clone();
+            let body = read_body(request, true).await?;
+            let rpc = match mcp::protocol::parse(&headers, &body) {
+                Ok(rpc) => rpc,
+                Err(reply) => return Ok(mcp_response(reply)),
+            };
+            // No await between releasing parsing capacity and taking semantic
+            // capacity. A failed transfer rejects promptly; it never nests pools.
+            reserved
+                .send(None)
+                .map_err(|_| code(503, "server_stopping"))?;
+            let slots = match self.slots(client.identity, rpc.is_read(), false) {
+                Ok(slots) => Arc::new(slots),
+                Err(error) => {
+                    return Ok(mcp_response(McpReply::error(
+                        error.status,
+                        Some(&rpc.id),
+                        1001,
+                        "Request capacity occupied",
+                    )))
+                }
+            };
+            reserved
+                .send(Some(slots))
+                .map_err(|_| code(503, "server_stopping"))?;
+            let id = rpc.id.clone();
+            let result = tokio::time::timeout_at(
+                mcp_deadline,
+                self.mcp
+                    .dispatch(rpc, service, client, &self.build, mcp_deadline),
+            )
+            .await;
+            return Ok(mcp_response(result.unwrap_or_else(|_| {
+                McpReply::error(
+                    503,
+                    Some(&id),
+                    -32603,
+                    "Request timed out; recover by original operation key",
+                )
+            })));
+        }
         // SSE uses owner subscriber limits (64 total/four per identity), not the
         // ordinary request reservation, for its lifetime.
         if method == Method::GET && path == "/v1/events" {
@@ -406,6 +556,18 @@ fn access_error(error: AccessError) -> ErrorCode {
         AccessError::Forbidden => code(403, "forbidden"),
         AccessError::Unauthenticated => code(401, "unauthenticated"),
         AccessError::Busy => code(429, "busy"),
+    }
+}
+fn enrollment_error(error: EnrollmentError) -> ErrorCode {
+    match error {
+        EnrollmentError::Denied => code(403, "forbidden"),
+        EnrollmentError::StaleGeneration => code(409, "stale_enrollment"),
+        EnrollmentError::KeyConflict => code(409, "operation_key_conflict"),
+        EnrollmentError::UnsafeMetadata => code(423, "unsafe_enrollment"),
+        EnrollmentError::Persistence => code(503, "enrollment_persistence_failed"),
+        EnrollmentError::Credential(_) => code(423, "mcp_credentials_blocked"),
+        EnrollmentError::RevocationPending => code(503, "mcp_revocation_pending"),
+        EnrollmentError::Exhausted => code(503, "enrollment_exhausted"),
     }
 }
 fn request_error(error: RequestError) -> ErrorCode {
@@ -553,13 +715,34 @@ fn failure(error: ErrorCode) -> HttpResponse {
     json_response(error.status, error.body())
 }
 fn json_response(status: u16, value: Value) -> HttpResponse {
-    let (status, bytes) = match response::encode(&value, response::MAX_OUTPUT_BYTES) {
+    json_response_limited(status, value, response::MAX_OUTPUT_BYTES)
+}
+fn mcp_response(reply: McpReply) -> HttpResponse {
+    match response::encode(&reply.body, mcp::MAX_RESULT_BYTES) {
+        Ok(bytes) => json_bytes(reply.status, bytes),
+        Err(_) => json_response(
+            503,
+            McpReply::error(
+                503,
+                reply.body.get("id"),
+                -32603,
+                "Response too large; recover by original operation key",
+            )
+            .body,
+        ),
+    }
+}
+fn json_response_limited(status: u16, value: Value, cap: usize) -> HttpResponse {
+    let (status, bytes) = match response::encode(&value, cap) {
         Ok(bytes) => (status, bytes),
         Err(error) => (
             error.status,
             serde_json::to_vec(&error.body()).expect("static error"),
         ),
     };
+    json_bytes(status, bytes)
+}
+fn json_bytes(status: u16, bytes: Vec<u8>) -> HttpResponse {
     Response::builder()
         .status(status)
         .header("content-type", "application/json")

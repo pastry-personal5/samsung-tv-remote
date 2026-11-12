@@ -106,6 +106,10 @@ dto!(Recovery {
     transaction_id: String,
     confirm_device_id: String
 });
+dto!(McpEnrollment {
+    expected_generation: Counter,
+    enabled: bool,
+});
 
 #[derive(Deserialize)]
 enum Interface {
@@ -332,4 +336,12 @@ pub fn parse_mutation(
 pub fn parse_stop(body: &[u8], current: Epoch) -> Result<(Epoch, String), RequestError> {
     let (epoch, key, _) = decode::<Empty>(body)?.request(current)?;
     Ok((epoch, key))
+}
+
+pub fn parse_mcp_enrollment(
+    body: &[u8],
+    current: Epoch,
+) -> Result<(String, u64, bool), RequestError> {
+    let (_, key, value) = decode::<McpEnrollment>(body)?.request(current)?;
+    Ok((key, value.expected_generation.0, value.enabled))
 }

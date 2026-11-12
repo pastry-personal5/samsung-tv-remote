@@ -16,6 +16,287 @@ use std::process::{Command, Output, Stdio};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 const BINARY: &str = env!("CARGO_BIN_EXE_samsung-tv-remote");
+
+fn headers_output(fixture: &Fixture, url: &str) -> Output {
+    Command::new(BINARY)
+        .args([
+            std::ffi::OsStr::new("--mcp-headers"),
+            std::ffi::OsStr::new("--fake-profile"),
+            fixture.base().as_os_str(),
+        ])
+        .env("CLAUDE_CODE_MCP_SERVER_URL", url)
+        .stdin(Stdio::null())
+        .output()
+        .unwrap()
+}
+
+fn mcp_management(fixture: &Fixture, arguments: &[&str]) -> Value {
+    let output = Command::new(BINARY)
+        .arg("--mcp-management")
+        .args(arguments)
+        .arg("--fake-profile")
+        .arg(fixture.base())
+        .stdin(Stdio::null())
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(!output.stdout.windows(6).any(|window| window == b"Bearer"));
+    serde_json::from_slice(&output.stdout).unwrap()
+}
+
+#[tokio::test]
+async fn mcp_offline_preparation_and_revocation_preserve_stop_without_constructing_a_runtime() {
+    use samsung_tv_remote::server::lifecycle::stop::{FileStopStore, StopMarker, StopStore};
+    let fixture = Fixture::new();
+    let status = mcp_management(&fixture, &["status"]);
+    assert_eq!(status["enabled"], false);
+    assert_eq!(status["server_running"], false);
+    assert!(status["url"].is_null());
+    let directory = Arc::new(RuntimeDirectory::open(&fixture.base().join("m8-fake-v1")).unwrap());
+    let owner = directory.lock().unwrap();
+    FileStopStore(directory.clone())
+        .write(&StopMarker {
+            version: 1,
+            profile: "m8-fake-v1".into(),
+            server_epoch: uuid::Uuid::new_v4().to_string(),
+            operation_key: uuid::Uuid::new_v4().to_string(),
+            identity: "gui".into(),
+        })
+        .unwrap();
+    let marker = directory.read("stopped.json", 4096).unwrap().unwrap();
+    drop(owner);
+    let prepared = mcp_management(&fixture, &["prepare"]);
+    assert_eq!(prepared["server_running"], false);
+    let url = prepared["url"].as_str().unwrap();
+    let enabled = mcp_management(
+        &fixture,
+        &["enable", "0", &uuid::Uuid::new_v4().to_string()],
+    );
+    assert_eq!(enabled["enabled"], true);
+    assert_eq!(enabled["generation"], "1");
+    let stopped = headers_output(&fixture, url);
+    assert!(!stopped.status.success());
+    assert!(stopped.stdout.is_empty());
+    assert_eq!(
+        serde_json::from_slice::<Value>(&stopped.stderr).unwrap()["error"],
+        "server_stopped"
+    );
+    let disabled = mcp_management(
+        &fixture,
+        &["disable", "1", &uuid::Uuid::new_v4().to_string()],
+    );
+    assert_eq!(disabled["enabled"], false);
+    assert_eq!(disabled["generation"], "2");
+    assert_eq!(
+        directory.read("stopped.json", 4096).unwrap().unwrap(),
+        marker
+    );
+    assert!(directory.lock().is_ok());
+    // Only explicit Resume constructs the fake runtime; it cannot regrant MCP.
+    fixture.run("--server-resume");
+    let denied = headers_output(&fixture, url);
+    assert!(!denied.status.success());
+    assert!(denied.stdout.is_empty());
+    assert_eq!(
+        serde_json::from_slice::<Value>(&denied.stderr).unwrap()["error"],
+        "mcp_not_enrolled"
+    );
+}
+
+#[tokio::test]
+async fn concurrent_header_helpers_cold_start_one_owner_and_reuse_one_mcp_bearer() {
+    let fixture = Fixture::new();
+    let prepared = mcp_management(&fixture, &["prepare"]);
+    let url = prepared["url"].as_str().unwrap();
+    mcp_management(
+        &fixture,
+        &["enable", "0", &uuid::Uuid::new_v4().to_string()],
+    );
+    let outputs = std::thread::scope(|scope| {
+        let jobs: Vec<_> = (0..3)
+            .map(|_| scope.spawn(|| headers_output(&fixture, url)))
+            .collect();
+        jobs.into_iter()
+            .map(|job| job.join().unwrap())
+            .collect::<Vec<_>>()
+    });
+    let mut first: Option<Value> = None;
+    for output in outputs {
+        // Helper stderr contains only fixed error codes. Never include its
+        // credential-bearing stdout in a failure diagnostic.
+        assert!(
+            output.status.success(),
+            "helper failed ({}): {}",
+            output.status,
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert!(output.stderr.is_empty());
+        let headers: Value = serde_json::from_slice(&output.stdout).unwrap();
+        assert_eq!(headers.as_object().unwrap().len(), 1);
+        assert!(headers["Authorization"]
+            .as_str()
+            .unwrap()
+            .starts_with("Bearer "));
+        if let Some(first) = &first {
+            assert!(headers == *first);
+        } else {
+            first = Some(headers);
+        }
+    }
+    let client = fixture.client().await;
+    assert_eq!(state(&client).await["devices"], json!([]));
+    let directory = RuntimeDirectory::open(&fixture.base().join("m8-fake-v1")).unwrap();
+    assert!(directory.lock().is_err());
+    assert!(Manifest::read(&directory).unwrap().unwrap().mcp_url == url);
+}
+
+#[tokio::test]
+async fn header_helper_withholds_credentials_on_wrong_destination_disable_and_sticky_stop() {
+    let fixture = Fixture::new();
+    fixture.run("--server-start");
+    let gui = fixture.client().await;
+    let state = state(&gui).await;
+    let directory = RuntimeDirectory::open(&fixture.base().join("m8-fake-v1")).unwrap();
+    let url = Manifest::read(&directory).unwrap().unwrap().mcp_url;
+    for destination in [
+        url.clone(),
+        "https://example.invalid/mcp".into(),
+        format!("{url}?redirect=1"),
+        String::new(),
+    ] {
+        let denied = headers_output(&fixture, &destination);
+        assert!(!denied.status.success());
+        assert!(denied.stdout.is_empty());
+    }
+    let enable = json!({"server_epoch":state["server_epoch"],"operation_key":uuid::Uuid::new_v4().to_string(),"expected_generation":"0","enabled":true});
+    assert_eq!(
+        gui.call("POST", "/v1/mcp/enrollment", Some(&enable))
+            .await
+            .unwrap()
+            .0,
+        200
+    );
+    let first = headers_output(&fixture, &url);
+    assert!(first.status.success());
+    assert!(first.stderr.is_empty());
+    let first: Value = serde_json::from_slice(&first.stdout).unwrap();
+    assert_eq!(first.as_object().unwrap().len(), 1);
+    let bearer = first["Authorization"].as_str().unwrap();
+    assert!(bearer.starts_with("Bearer "));
+    assert_eq!(bearer.len(), 71);
+    let again = headers_output(&fixture, &url);
+    assert!(again.status.success());
+    let again: Value = serde_json::from_slice(&again.stdout).unwrap();
+    // Avoid printing the header, even on a test failure.
+    assert!(again["Authorization"] == first["Authorization"]);
+    let denied = headers_output(&fixture, "https://example.invalid/mcp");
+    assert!(!denied.status.success());
+    assert!(denied.stdout.is_empty());
+    fixture.run("--server-stop");
+    fixture.owner_settled();
+    let stopped = headers_output(&fixture, &url);
+    assert!(!stopped.status.success());
+    assert!(stopped.stdout.is_empty());
+    let error: Value = serde_json::from_slice(&stopped.stderr).unwrap();
+    assert_eq!(error["error"], "server_stopped");
+    assert!(directory.read("stopped.json", 4096).unwrap().is_some());
+}
+
+#[tokio::test]
+async fn mcp_enrollment_defaults_off_regrant_preserves_private_operations_and_disable_survives_restart(
+) {
+    use samsung_tv_remote::server::{bootstrap::BootstrapError, launch::LaunchError};
+    let fixture = Fixture::new();
+    fixture.run("--server-start");
+    let gui = fixture.client().await;
+    let state = state(&gui).await;
+    let build = build_identity(Path::new(BINARY)).unwrap();
+    assert!(matches!(
+        launch::attach(&fixture.base(), Role::Mcp, Some(&build)).await,
+        Err(LaunchError::Bootstrap(BootstrapError::Denied))
+    ));
+    let (status, initial) = gui.call("GET", "/v1/mcp", None).await.unwrap();
+    assert_eq!(status, 200);
+    assert_eq!(initial["enabled"], false);
+    assert_eq!(initial["generation"], "0");
+    let change = |generation: &str, enabled: bool| json!({"server_epoch":state["server_epoch"],"operation_key":uuid::Uuid::new_v4().to_string(),"expected_generation":generation,"enabled":enabled});
+    let enable = change("0", true);
+    let (status, first) = gui
+        .call("POST", "/v1/mcp/enrollment", Some(&enable))
+        .await
+        .unwrap();
+    assert_eq!(status, 200, "{first}");
+    assert_eq!(first["enabled"], true);
+    assert_eq!(first["generation"], "1");
+    let mcp = launch::attach(&fixture.base(), Role::Mcp, Some(&build))
+        .await
+        .unwrap();
+    assert_eq!(mcp.call("GET", "/v1/mcp", None).await.unwrap().0, 403);
+    let probe = mutation(&mcp, "/v1/probes", json!({"host":"synthetic-tv.invalid"})).await;
+    assert_eq!(probe["result"]["kind"], "probed");
+    let (status, disabled) = gui
+        .call("POST", "/v1/mcp/enrollment", Some(&change("1", false)))
+        .await
+        .unwrap();
+    assert_eq!(status, 200, "{disabled}");
+    assert_eq!(disabled["enabled"], false);
+    assert_eq!(mcp.call("GET", "/v1/state", None).await.unwrap().0, 401);
+    assert!(matches!(
+        launch::attach(&fixture.base(), Role::Mcp, Some(&build)).await,
+        Err(LaunchError::Bootstrap(BootstrapError::Denied))
+    ));
+    // Explicit regrant keeps the same principal and its retained operations,
+    // while the previous bearer remains rejected.
+    assert_eq!(
+        gui.call("POST", "/v1/mcp/enrollment", Some(&change("2", true)))
+            .await
+            .unwrap()
+            .0,
+        200
+    );
+    let next = launch::attach(&fixture.base(), Role::Mcp, Some(&build))
+        .await
+        .unwrap();
+    let (status, retained) = next
+        .call(
+            "GET",
+            &format!(
+                "/v1/operations/{}?epoch={}",
+                probe["operation_id"].as_str().unwrap(),
+                state["server_epoch"].as_str().unwrap()
+            ),
+            None,
+        )
+        .await
+        .unwrap();
+    assert_eq!(status, 200);
+    assert_eq!(retained["operation_id"], probe["operation_id"]);
+    assert_eq!(mcp.call("GET", "/v1/state", None).await.unwrap().0, 401);
+    assert_eq!(
+        gui.call("POST", "/v1/mcp/enrollment", Some(&change("3", false)))
+            .await
+            .unwrap()
+            .0,
+        200
+    );
+    fixture.run("--server-stop");
+    fixture.owner_settled();
+    fixture.run("--server-resume");
+    let gui = fixture.client().await;
+    let (status, persisted) = gui.call("GET", "/v1/mcp", None).await.unwrap();
+    assert_eq!(status, 200);
+    assert_eq!(persisted["enabled"], false);
+    assert_eq!(persisted["generation"], "4");
+    assert!(matches!(
+        launch::attach(&fixture.base(), Role::Mcp, Some(&build)).await,
+        Err(LaunchError::Bootstrap(BootstrapError::Denied))
+    ));
+}
+
 fn command(binary: &Path, base: &Path, action: &str) -> Output {
     let child = Command::new(binary)
         .args([

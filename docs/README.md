@@ -24,6 +24,11 @@ Current references:
   owner answers; the [implementation ledger](phase-2/milestone-09-implementation.md)
   records current progress. The [optional TV smoke runbook](phase-2/milestone-09-tv-smoke.md)
   is supplementary evidence, not an M9 exit gate.
+- [P2-M10 implementation plan](phase-2/milestone-10-overview.md) — Streamable
+  HTTP MCP, token-free Claude Code connection and separate acceptance gates.
+  The [plan review](phase-2/milestone-10-plan-review.md) records corrected contracts
+  and remaining implementation decisions; the
+  [implementation ledger](phase-2/milestone-10-implementation.md) tracks active delivery.
 - [P2-M6 human test runbook](phase-2/milestone-06-human-runbook.md) — commands
   for the isolated macOS account and remaining platform checks.
 - [Control API Server internals](phase-2/control-server-internals.md) — planned
