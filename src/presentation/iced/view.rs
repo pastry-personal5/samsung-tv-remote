@@ -1022,6 +1022,7 @@ pub struct SettingsView<'a> {
     pub selected_label: Option<&'a str>,
     pub pairing_pending: bool,
     pub forget_pending: bool,
+    pub cleanup_required: bool,
     pub wake_wired: &'a str,
     pub wake_wifi: &'a str,
     pub wake_active: Option<WakeInterface>,
@@ -1072,6 +1073,7 @@ pub fn settings_window(options: SettingsView<'_>) -> Element<'_, Message> {
         selected_label: _,
         pairing_pending,
         forget_pending,
+        cleanup_required,
         wake_wired,
         wake_wifi,
         wake_active,
@@ -1119,6 +1121,13 @@ pub fn settings_window(options: SettingsView<'_>) -> Element<'_, Message> {
         .map(|value| format!("Observed certificate SHA-256: {value}"))
         .unwrap_or_else(|| "No certificate observed yet.".to_owned());
     let mut selected_content = column![].spacing(10);
+    if cleanup_required {
+        selected_content = selected_content.push(
+            button("Retry incomplete TV cleanup")
+                .on_press_maybe((!forget_pending).then_some(Message::ForgetSelected))
+                .style(action_button_style),
+        );
+    }
     if !saved_devices.is_empty() {
         let header = row![
             container(text("Select").size(13)).width(Length::Fixed(48.0)),

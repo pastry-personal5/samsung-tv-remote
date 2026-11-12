@@ -1,8 +1,13 @@
 # Phase 1 Changelog
 
-Status: Active
+Status: Done
 
 ## Entries
+
+- 2026-11-11 — Completed P1-M13 and Phase 1 after the owner confirmed that
+  human testing is done and working. This records manual acceptance without
+  a numeric latency claim. Native keyboard focus and screen-reader exposure
+  remain product follow-ups.
 
 - 2026-10-10 — Completed P1-M14. The signed bundle verified successfully and
   native review covered all primary views, Settings Discovery, Power Controls,

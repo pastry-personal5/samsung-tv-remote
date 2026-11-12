@@ -74,6 +74,8 @@ the background server's `/mcp` Streamable HTTP endpoint.
 
 ## References
 
+- [M6 acceptance and test ownership](milestone-06-acceptance.md)
+
 - [Architecture](milestone-10-architecture.md)
 - [Target architecture](target-architecture.md)
 - [Lifecycle and security research](server-lifecycle-security.md)

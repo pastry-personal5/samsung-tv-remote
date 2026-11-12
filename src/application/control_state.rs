@@ -80,6 +80,15 @@ impl ControlState {
         }
     }
 
+    /// Restore identity without restoring a live session or inference. A new
+    /// runtime's epoch distinguishes this generation zero from older owners.
+    pub(crate) fn restored(device: Option<DeviceDisplay>) -> Self {
+        Self {
+            selection: device.map(Selection::Selected).unwrap_or_default(),
+            ..Self::none()
+        }
+    }
+
     /// Returns the currently selected device, if any.
     pub const fn selected_device(&self) -> Option<DeviceId> {
         match &self.selection {

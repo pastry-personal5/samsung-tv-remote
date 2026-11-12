@@ -12,6 +12,8 @@ Current references:
   Streamable HTTP MCP refactor.
 - [P2-M6 contract review](phase-2/milestone-06-overview.md) — current
   architecture, API, MCP, migration and signed-prototype evidence.
+- [P2-M7 completion review](phase-2/milestone-07-review.md) — implemented
+  headless service, temporary GUI adapter, recovery and resource evidence.
 - [P2-M6 human test runbook](phase-2/milestone-06-human-runbook.md) — commands
   for the isolated macOS account and remaining platform checks.
 - [Control API Server internals](phase-2/control-server-internals.md) — planned

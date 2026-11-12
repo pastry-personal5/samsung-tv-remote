@@ -1,9 +1,13 @@
 pub mod certificate_trust;
+pub mod control_service;
 pub mod control_state;
 pub mod credential_store;
 pub mod device_repository;
+mod operations;
+pub mod recovery;
 pub mod remote_dispatcher;
 pub mod remote_request;
+pub mod runtime;
 pub mod tv_address;
 pub mod tv_control_coordinator;
 pub mod tv_discovery;

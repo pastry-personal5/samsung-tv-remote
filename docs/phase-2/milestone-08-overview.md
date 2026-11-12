@@ -54,6 +54,8 @@ HTTP API with an event stream.
 
 ## References
 
+- [M6 acceptance and test ownership](milestone-06-acceptance.md)
+
 - [Architecture](milestone-08-architecture.md)
 - [Target architecture](target-architecture.md)
 - [Lifecycle and security research](server-lifecycle-security.md)

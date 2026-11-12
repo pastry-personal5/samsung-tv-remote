@@ -1,8 +1,14 @@
 # P2-M6 Phase 1 baseline and migration map
 
 Status: Reviewed against the worktree on 2026-10-15. The acceptance column
-describes future evidence, not a passing claim. The shipped application is
-still one process with direct Iced-to-coordinator calls.
+describes future evidence, not a passing claim. This records the pre-extraction baseline. M7 is now complete in one process
+with the GUI using the typed service; see the [M7 record](milestone-07-architecture.md).
+
+The owner closed P1-M13 and Phase 1 on 2026-11-11 after successful manual
+testing. The rows below remain migration parity requirements; Phase 2 must
+preserve that accepted behavior rather than treating Wake acceptance as an
+open Phase 1 blocker. See the [M6 acceptance record](milestone-06-acceptance.md)
+for updated migration approval and implementation-test ownership.
 
 ## Current data and bundle inventory
 
@@ -15,11 +21,13 @@ still one process with direct Iced-to-coordinator calls.
 | Bundle | `scripts/build_macos_bundle.sh` builds one signed GUI executable, bundle ID `dev.samsungtvremote.local`; current plist has Local Network usage text | M6 signed prototype must use the actual local signing identity and record min macOS version, process shape, Local Network attribution and Keychain prompts. M9 adds the chosen server executable/mode. |
 | Dispatch journal | In-memory `RemoteDispatcher`, caller acknowledges terminal results | Replace observer-driven removal with client-scoped operation registry; test two clients and bounded expiry. No on-disk operation replay. |
 
-`LocalDeviceRepository` writes via temporary file and `sync_all` on the file,
-then rename. It does not currently sync the parent directory. Pairing saves a
+At this baseline, `LocalDeviceRepository` wrote via temporary file and file
+`sync_all`, without parent-directory sync. M7 now syncs both and journals
+cross-store mutations; this paragraph describes the former behavior. Pairing saved a
 Keychain token, trust, device, then selection; re-pair overwrites token before
 trust/device; forget attempts all three deletions. These are not atomic across
-stores. The current in-memory `PartialCleanup` result does not survive a crash.
+stores. The former in-memory `PartialCleanup` result did not survive a crash; M7
+now restores a durable block and requires explicit guarded recovery.
 
 ## Behavior migration
 
@@ -117,5 +125,9 @@ Crash injection must stop the process after journal preparation, each store
 write/delete, selection write, and journal removal for all three operations.
 On restart, fake ports prove that no blocked ID is used for TV I/O, partial
 forget never reports complete, and a completed marker can be cleared safely.
-The current code has no journal; this is an M7 implementation gate and an M9
-real-profile cutover gate.
+M7 now has an opt-in `recovery.json` file adapter and a journaled Forget path
+with deterministic interruption/restart tests in `tests/forget_recovery.rs`.
+One serialized marker blocks normal control for the profile until explicit
+recovery; the legacy GUI still uses its original setup paths. First Pairing,
+re-pair, and rotation recovery remain M7 implementation gates, and the full
+recovery contract remains an M9 real-profile cutover gate.

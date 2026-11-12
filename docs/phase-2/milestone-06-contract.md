@@ -1,9 +1,14 @@
 # P2-M6 control contract draft
 
-Status: Design freeze candidate. This is a specification for M7–M10, not a
+Status: M7 application contract implemented; wire design remains for M8–M10. This is not a
 claim that `/v1` or `/mcp` exists in the shipped app. A signed lifecycle and
 Keychain prototype and a real Claude Code connection to the product server
 remain release gates.
+
+The [2026-11-11 acceptance record](milestone-06-acceptance.md) fixes owner
+choices and assigns production verification to M7–M11. MCP confirmation is
+an explicit typed step; human approval belongs to the client, with TV-side
+Pairing approval still required.
 
 ## Common envelope and admission
 
@@ -64,31 +69,60 @@ effect. There is no exactly-once guarantee across a restart or after expiry.
 
 The 30-minute/32,768-record pair allows roughly 18 new operations per second
 for a sustained half hour before capacity pressure, while bounding memory.
-M7 must measure actual record size and realistic key bursts; if the limit is
-reached, the server returns `busy` rather than silently shortening the
-deduplication window.
+The [M7 completion review](milestone-07-review.md) records measured memory,
+resource limits and timings. At capacity the owner refuses new admission
+without shortening deduplication retention. The global 32,768-record bound
+also has per-client quotas of 8,192 retained and 64 pending operations.
 
-The external owner mailbox has 128 requests; effect completion and shutdown
-have a reserved 32-message lane. Remote FIFO capacity is 32 waiting requests
-with one write in flight. At most 8 non-remote effects run, at most 2 of them
-may be discovery/probe, and at most one setup/storage commit for a target may
-run. The HTTP body limit is 64 KiB; setup labels, hosts, and all other fields
-also have type-specific limits. Exhausted capacity returns `busy` before an
-effect begins. The owner drains at most 16 external requests before servicing
-completion/lifecycle traffic, so a busy client cannot starve results. M7 must
-test these numbers under slow effects and adjust them with measured memory use
-before M8 publishes the API.
+The external owner mailbox has 128 requests. Completion/lifecycle delivery is
+independent: at most eight joined effect results, a dedicated drain signal
+and a 32-event session lane. This replaces the proposed generic 32-completion
+mailbox. Remote capacity is 32 waiting plus one writer. At most eight
+non-remote effects run, including timed-out blocking workers. Discovery/probe
+starts conservatively require fewer than two existing workers. One serialized
+storage lane spans all IDs. Drain/completions/timers have priority and ingress
+has an opportunity at least every 16 owner transitions. The proposed HTTP body
+limit is 64 KiB; M8 must also enforce the runtime's type-specific field limits.
+
+M7 fixes candidate caps at 1,024 global/64 per client and 32 per discovery;
+observations at 128 global/eight per client; subscribers at 64 global/four per
+client with 64 events each. Keys are 128 bytes, hosts 253, Pair labels 80
+(input-envelope maximum 256), probe name/model fields 256 each, saved labels
+256, and saved records 1,024. Oversize profiles block instead of truncating.
+Both candidate and observation authority is client/epoch bound. Detailed
+outcomes remain private to their owning client; coarse phase/ID events are
+visible to all authorized observers.
 
 Candidate and observation handles expire 2 and 5 minutes after publication,
 respectively, and are invalid after an epoch change. Discovery has a 10-second
 deadline, probe 20 seconds, TV Pairing approval 90 seconds, ordinary connect
 75 seconds, remote socket write 4 seconds, and Wake reconnect 30 seconds.
-These are owner-supervised deadlines, not automatic retries. A deadline after
+These are outer supervision ceilings, not replacements for
+existing stage timeouts or permission to extend user-visible waits. Preserve
+the current 5-second SSDP search, 8-second connection stages, 45-second TV
+approval wait, 4-second write, 2-second disconnected-power probe, and 30-second
+Wake window during extraction. The M7 review records the stage-by-stage table and fake-time evidence.
+Pair preparation is capped at 80 seconds plus a 10-second commit report;
+Connect, disconnected Power and Wake readiness include their storage stages.
+Storage and packet-send reporting deadlines are 10 seconds; storage keeps
+its worker/fence and a packet deadline revokes its permit without dropping
+the worker. Total remote lifetime, including FIFO residence, is 136 seconds. Any user-visible timeout change requires
+a documented rationale and acceptance. These deadlines are not automatic
+retries. A deadline after
 possible TV or packet transmission yields `uncertain` for that effect; a
 deadline before transmission yields `not_sent`. Workers must return a tagged
-completion or be supervised into such a terminal result. M7 compares these
-values with the present 5-second SSDP, 8-second connection, 45-second TV
-authorization, 4-second write, and 30-second Wake reconnect behavior.
+completion or be supervised into such a terminal result. M7 preserves the existing 5-second SSDP, 8-second connection, 45-second TV
+authorization, 4-second write, and 30-second Wake reconnect stages.
+
+The M7 in-process runtime reports drain within 5 seconds after closing
+mutation admission, or immediately once workers settle. Read-only queries
+remain available during settlement. Its drain handle reports outstanding
+effects and unresolved storage; an interrupted storage operation is uncertain,
+never reported as rolled back. Blocking workers retain their slot/fence after
+the report, and the composition layer must await handle settlement before
+opening the same profile with another owner. This is a reporting deadline,
+not a process-exit deadline. Durable recovery is covered by the M7 review; process-exit and sticky-stop
+policy still need the later lifecycle evidence.
 
 ### Result vocabulary
 
@@ -119,13 +153,21 @@ cancelled as if TV approval or a storage commit were undone.
 | Pair / re-pair | Live observation, exact fingerprint confirmation, generation; re-pair ID/host match | TV approval, then serialized token/trust/device commit; typed Pairing result | Before approval may stop waiting; after approval/commit report factual outcome or partial block. |
 | Select | Expected generation, saved ID | Durable selected-ID write, then new generation/event | Before durable write; after write selection is committed. |
 | Connect | Selected ID/generation and valid trust/token | Secure session and remote-readiness observation | A cancelled or late session is closed; no state adoption. |
-| Set Wake | Saved ID, config revision, valid MAC/active choice | Durable config revision | Before durable write only. |
+| Set Wake | Selected saved ID/generation, config revision, valid MAC/active choice | Durable config revision | Before durable write only. |
 | Remote action | Selected ID/generation, Pairing and connection, FIFO room | One dispatched key; `not_sent`, `written`, `uncertain` | Waiting can be unsent; in-flight may be uncertain. |
 | Disconnected Power Toggle | Selected ID/generation, Wake configuration, Pairing material | Probe, then one Wake packet only for offline/timeout; separate readiness result | Before packet can be unsent; after packet preserve sent fact. |
 | Wake | Selected ID/generation, valid local-route Wake config | One UDP packet, then reconnect observation | Same packet boundary; cancel only reconnect after send. |
 | Forget | Saved ID/config revision, exact ID confirmation | Fenced Keychain/trust/repository removal; per-store fact | Once first removal starts, complete or retain recovery marker. |
 | Stop server | GUI management capability, current epoch | Durable sticky-stop marker, then admission drain and listener close | After marker is durable, only explicit GUI Resume may clear it. |
 | Operation lookup / subscribe | Authenticated identity | No TV effect; same owner registry/snapshot | Cancelling query/stream does not cancel operation. |
+
+Wake captures validated configuration at admission; later configuration edits
+apply to new operations. Selection, forget and Stop fences still apply before
+the single send. M7 tests edits racing packet transmission. The temporary GUI maps guarded
+recovery to exact-target service commands: partial Forget retries incomplete
+steps with its transaction; interrupted first Pairing compensates its reserved
+ID; interrupted re-pair/rotation requires a fresh probe and TV approval bound
+to its recovery transaction. The M8 wire adapters must preserve these guards.
 
 Starting the server and listing MCP tools have no TV-network effect. The GUI's
 current launch reconnect becomes a separate `Connect` request after attach;
@@ -197,10 +239,20 @@ retry. Responses never include a Pairing token.
 | `429` | `busy` | Capacity full; lookup same key if admission was ambiguous. |
 | `503` | `transport_unavailable`, `storage_unavailable`, `server_stopping` | Service unavailable; inspect operation before repeating. |
 
-Malformed or unauthenticated input is never registered. An admitted policy
-rejection is a terminal operation result rather than an untracked transport
-error. Error bodies use `{ "error": { "code": "...", "message": "..." } }` and
-optionally a safe `current` precondition object; no internal stack or host.
+Malformed or unauthenticated input, a stale epoch, key conflict, or ingress/
+registry-capacity rejection is not admitted and has no new operation record.
+For a current-epoch new key with registry space, the owner reserves its record
+before evaluating mutable policy; a stale selection/configuration, expired
+observation, missing Pairing or target, and similar policy rejection is a
+retained terminal result. Its response uses the table’s HTTP status and error
+code and includes `operation_id`, `server_epoch`, and `expires_at`. The HTTP
+status alone does not determine admission. A known duplicate returns the
+original record even when the registry is full. A rejected FIFO/effect-capacity
+check is retained as terminal `busy` when a registry slot was reserved;
+ingress or registry saturation cannot promise retention. No rejected request
+starts a TV effect. Error bodies use
+`{ "error": { "code": "...", "message": "..." } }` and optionally a safe `current` precondition object and the admission metadata
+above; no internal stack or host.
 
 `GET /v1/events` registers its subscriber and captures the initial snapshot
 in one owner transition. The snapshot has revision `r`; later messages must

@@ -1,10 +1,23 @@
 use crate::domain::DeviceId;
+use std::sync::Arc;
 
 use super::certificate_trust::{CertificatePin, CertificateTrustStore, TrustError, TrustRecord};
 use super::credential_store::{CredentialStore, PairingToken, SecretError};
 use super::device_repository::{DeviceRepository, RepositoryError, SavedDevice};
+use super::recovery::{ForgetMarker, RecoveryJournal};
 use super::tv_address::TvHost;
 use super::wake::WakeConfiguration;
+
+#[path = "durable_pairing.rs"]
+mod durable_pairing;
+
+pub struct ApprovedPairing {
+    pub device: SavedDevice,
+    pub pin: CertificatePin,
+    pub token: PairingToken,
+    pub repair: bool,
+    pub recovery: Option<super::recovery::PairingMarker>,
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SetupError {
@@ -51,6 +64,7 @@ pub struct TvSetupService<R, S, T> {
     devices: R,
     secrets: S,
     trust: T,
+    journal: Option<Arc<dyn RecoveryJournal>>,
 }
 
 pub trait TvSetupPort: Send + Sync {
@@ -80,6 +94,38 @@ pub trait TvSetupPort: Send + Sync {
         wake: WakeConfiguration,
     ) -> Result<SavedDevice, RepositoryError>;
     fn forget(&self, id: DeviceId) -> ForgetResult;
+    // Legacy adapters fail closed until they explicitly implement recovery.
+    fn pending_recovery(&self) -> Result<Option<ForgetMarker>, RepositoryError> {
+        Err(RepositoryError::Unavailable)
+    }
+    fn forget_durable(&self, _id: DeviceId) -> Result<ForgetResult, RepositoryError> {
+        Err(RepositoryError::Unavailable)
+    }
+    fn recover_forget(&self, _marker: ForgetMarker) -> Result<ForgetResult, RepositoryError> {
+        Err(RepositoryError::Unavailable)
+    }
+    fn pending_pairing(&self) -> Result<Option<super::recovery::PairingMarker>, RepositoryError> {
+        Err(RepositoryError::Unavailable)
+    }
+    fn commit_approved_pairing(
+        &self,
+        _approved: ApprovedPairing,
+    ) -> Result<SavedDevice, SetupError> {
+        Err(SetupError::PartialCleanup)
+    }
+    fn commit_rotated_token(
+        &self,
+        _material: ReconnectMaterial,
+        _token: PairingToken,
+    ) -> Result<(), SetupError> {
+        Err(SetupError::PartialCleanup)
+    }
+    fn recover_first_pair(
+        &self,
+        _marker: super::recovery::PairingMarker,
+    ) -> Result<ForgetResult, RepositoryError> {
+        Err(RepositoryError::Unavailable)
+    }
 }
 
 impl<R, S, T> TvSetupPort for TvSetupService<R, S, T>
@@ -140,6 +186,64 @@ where
     fn forget(&self, id: DeviceId) -> ForgetResult {
         Self::forget(self, id)
     }
+
+    fn pending_recovery(&self) -> Result<Option<ForgetMarker>, RepositoryError> {
+        self.journal
+            .as_ref()
+            .ok_or(RepositoryError::Unavailable)?
+            .load()
+    }
+
+    fn forget_durable(&self, id: DeviceId) -> Result<ForgetResult, RepositoryError> {
+        let journal = self.journal.as_ref().ok_or(RepositoryError::Unavailable)?;
+        if journal.load()?.is_some() || journal.pairing()?.is_some() {
+            return Err(RepositoryError::Unavailable);
+        }
+        let marker = ForgetMarker::prepared(id);
+        journal.write(marker)?;
+        self.finish_durable_forget(marker)
+    }
+
+    fn recover_forget(&self, marker: ForgetMarker) -> Result<ForgetResult, RepositoryError> {
+        let journal = self.journal.as_ref().ok_or(RepositoryError::Unavailable)?;
+        if journal.load()? != Some(marker) {
+            return Err(RepositoryError::Corrupt);
+        }
+        self.finish_durable_forget(marker)
+    }
+
+    fn pending_pairing(&self) -> Result<Option<super::recovery::PairingMarker>, RepositoryError> {
+        self.journal
+            .as_ref()
+            .ok_or(RepositoryError::Unavailable)?
+            .pairing()
+    }
+    fn commit_approved_pairing(
+        &self,
+        approved: ApprovedPairing,
+    ) -> Result<SavedDevice, SetupError> {
+        self.commit_durable_pairing(approved)
+    }
+    fn commit_rotated_token(
+        &self,
+        material: ReconnectMaterial,
+        token: PairingToken,
+    ) -> Result<(), SetupError> {
+        self.commit_durable_pairing(ApprovedPairing {
+            device: material.device,
+            pin: material.pin,
+            token,
+            repair: true,
+            recovery: None,
+        })
+        .map(|_| ())
+    }
+    fn recover_first_pair(
+        &self,
+        marker: super::recovery::PairingMarker,
+    ) -> Result<ForgetResult, RepositoryError> {
+        self.cleanup_first_pair(marker)
+    }
 }
 
 impl<R: DeviceRepository, S: CredentialStore, T: CertificateTrustStore> TvSetupService<R, S, T> {
@@ -148,7 +252,50 @@ impl<R: DeviceRepository, S: CredentialStore, T: CertificateTrustStore> TvSetupS
             devices,
             secrets,
             trust,
+            journal: None,
         }
+    }
+
+    pub fn with_journal(mut self, journal: Arc<dyn RecoveryJournal>) -> Self {
+        self.journal = Some(journal);
+        self
+    }
+
+    fn finish_durable_forget(
+        &self,
+        mut marker: ForgetMarker,
+    ) -> Result<ForgetResult, RepositoryError> {
+        let journal = self.journal.as_ref().ok_or(RepositoryError::Unavailable)?;
+        // Selection must be durably cleared before any deletion. A missing
+        // device record must never leave a selected, controllable identity.
+        if !marker.selection_cleared {
+            if self.devices.selected()? == Some(marker.target) {
+                self.devices.select(None)?;
+            }
+            marker.selection_cleared = true;
+            journal.write(marker)?;
+        }
+        if !marker.credential_removed && self.secrets.delete(marker.target).is_ok() {
+            marker.credential_removed = true;
+            journal.write(marker)?;
+        }
+        if !marker.trust_removed && self.trust.delete(marker.target).is_ok() {
+            marker.trust_removed = true;
+            journal.write(marker)?;
+        }
+        if !marker.record_removed && self.devices.delete(marker.target).is_ok() {
+            marker.record_removed = true;
+            journal.write(marker)?;
+        }
+        let result = ForgetResult {
+            credential_removed: marker.credential_removed,
+            trust_removed: marker.trust_removed,
+            record_removed: marker.record_removed,
+        };
+        if result.complete() {
+            journal.clear(marker.transaction)?;
+        }
+        Ok(result)
     }
 
     pub fn saved_devices(&self) -> Result<Vec<SavedDevice>, RepositoryError> {

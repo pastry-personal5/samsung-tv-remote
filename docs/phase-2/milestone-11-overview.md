@@ -59,8 +59,9 @@ remaining direct-control paths.
   retry loop. Tests record Gatekeeper, Local Network, exceptional legacy
   Keychain ACL/unlock, TV Pairing, and optional MCP client consent separately
   from avoidable repeated prompts. The release artifact's signing/notarization
-  policy is documented; a self-signed development bundle is not represented
-  as a prompt-free public release.
+  policy records the owner’s local signed installation target. Notarization
+  and public distribution are outside Phase 2; a local signature is not
+  evidence of public distribution acceptance.
 - [ ] `cargo fmt --all -- --check`, `cargo clippy --all-targets -- -D warnings`,
   and `cargo test` pass; signed-bundle, native accessibility, MCP client, and
   sanitized target-TV checks are recorded with any deferred evidence. Native
@@ -68,6 +69,8 @@ remaining direct-control paths.
   access under the signed bundle.
 
 ## References
+
+- [M6 acceptance and test ownership](milestone-06-acceptance.md)
 
 - [Architecture](milestone-11-architecture.md)
 - [Target architecture](target-architecture.md)

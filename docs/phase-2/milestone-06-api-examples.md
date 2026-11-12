@@ -19,7 +19,7 @@ revision. Examples are independent, not one chronological transcript. The
 | Re-pair | Same Pairing fields plus `replace_device_id:A`, `selection_generation:7` | Same ID A only after TV approval and durable commit; certificate/host mismatch or stale attempt cannot silently overwrite A. |
 | Select | `POST /v1/selection {server_epoch:E,operation_key:K,device_id:B,expected_generation:7}` | Durable success publishes selected B/generation 8. Failure returns `stale_selection` with current selection, no write. Same-ID A also advances generation and restarts session. |
 | Connect | `POST /v1/connections {server_epoch:E,operation_key:K,device_id:A,selection_generation:7}` | Receipt `O`; terminal `remote_ready`, `offline`, `pairing_required`, `certificate_changed`, or blocked. `remote_ready` is observed session readiness, not TV power state. |
-| Wake configuration | `PUT /v1/devices/A/wake {server_epoch:E,operation_key:K,expected_config_revision:3,wired:"02:11:22:33:44:55",wifi:null,active:"wired"}` | Durable config revision 4. Stale revision or invalid MAC is rejected without packet. |
+| Wake configuration | `PUT /v1/devices/A/wake {server_epoch:E,operation_key:K,expected_config_revision:3,selection_generation:7,wired:"02:11:22:33:44:55",wifi:null,active:"wired"}` | Durable config revision 4. Stale revision or invalid MAC is rejected without packet. |
 | Remote key | `POST /v1/remote-actions {server_epoch:E,operation_key:K,device_id:A,selection_generation:7,action:"VolumeUp"}` | Receipt `queued`; terminal `not_sent`, `written`, or `uncertain`. `written` is a socket fact only. |
 | Play/Pause | Same route with `action:"PlayPause"` | Server resolves `Play` or `Pause` at dispatch from its inference; uncertainty resets inference, never claims observed playback. |
 | Connected Power Toggle | Same route with `action:"PowerToggle"` | One queued power action; terminal is a remote-write fact, not observed power. |
@@ -46,3 +46,28 @@ An HTTP timeout after either body leads to operation lookup by K under the
 same authenticated client identity. The GUI generates K from one user intent
 and retains it through timeout/reconnect. MCP tools likewise require the
 caller to supply K; server adapters cannot create a fresh K on retry.
+
+## M7 application handoff
+
+These remain transport examples. M7 implements the matching typed service,
+including expiring client-bound candidates/observations and atomic snapshots.
+Wire IDs remain opaque; the transport must map the epoch-scoped Rust IDs to
+its declared DTO representation. It must never derive authority from a host
+or a fingerprint alone.
+
+Wake configuration additionally names the observed selected-TV generation.
+For an interrupted setup, inspect the safe recovery marker before any new
+mutation. A partial Forget retries via an exact device/transaction/confirmation
+command even if the device record is gone. First-Pairing recovery compensates
+only its reserved ID with the same guards. Re-pair/rotation recovery adds the
+exact recovery transaction to a fresh observation/fingerprint confirmation
+and obtains new TV approval; a normal Pair request cannot clear the marker.
+M8 must expose these typed recovery guards before publishing its routes.
+See the [M7 review](milestone-07-review.md) for limits and evidence.
+
+Cancel Wake carries the exact operation ID as well as the selected target and
+generation through to the application owner. A stale cancellation cannot
+cancel a later Wake for the same selected generation. The MCP Forget schema
+requires either `expected_config_revision` for ordinary deletion or
+`recovery_transaction` for guarded recovery, with the exact device confirmation
+in both forms.

@@ -23,9 +23,9 @@ an explicitly configured MCP client and never attaches across macOS users.
 Verify the helper executable's signing identity, Local Network permission,
 and legacy Keychain access in the actual bundle, not only under `cargo run`.
 Exercise denied and locked Keychain, revoked Local Network permission, and
-upgrade with a stable signing identity. If outside-App-Store distribution is
-the release channel, verify the nested binaries' Developer ID signatures,
-hardened runtime, and notarization separately from local signing checks.
+upgrade with a stable local signing identity. The Phase 2 target is the
+owner’s Mac with a local signed installation; no notarization is required.
+Public distribution needs a separate future acceptance plan.
 
 Run deterministic dual-client scenarios against a fake TV gateway. Verify
 atomic subscriber attachment and ordered revisions, slow-observer resnapshot,

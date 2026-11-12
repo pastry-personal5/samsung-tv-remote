@@ -11,6 +11,7 @@ use crate::application::certificate_trust::{
     CertificatePin, CertificateTrustStore, TrustError, TrustRecord,
 };
 use crate::application::device_repository::{DeviceRepository, RepositoryError, SavedDevice};
+use crate::application::recovery::{ForgetMarker, RecoveryJournal};
 use crate::application::tv_address::TvHost;
 use crate::application::wake::{WakeConfiguration, WakeInterface};
 use crate::domain::DeviceId;
@@ -25,6 +26,186 @@ pub struct LocalDeviceRepository {
 
 pub struct LocalCertificateTrustStore {
     file: JsonFile,
+}
+
+pub struct LocalRecoveryJournal {
+    file: JsonFile,
+}
+
+#[path = "pairing_journal.rs"]
+mod pairing_journal;
+
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct DiskRecovery {
+    version: u32,
+    kind: String,
+    transaction: String,
+    target: String,
+    selection_cleared: bool,
+    credential_removed: bool,
+    trust_removed: bool,
+    record_removed: bool,
+}
+
+impl LocalRecoveryJournal {
+    pub fn new(app_data_dir: &Path) -> Self {
+        Self {
+            file: JsonFile::new(app_data_dir.join("recovery.json")),
+        }
+    }
+
+    fn read_marker(&self) -> Result<Option<ForgetMarker>, RepositoryError> {
+        let value = self
+            .file
+            .read::<serde_json::Value>()
+            .map_err(recovery_io_error)?;
+        if value
+            .as_ref()
+            .is_some_and(|value| value["kind"] == "pairing")
+        {
+            self.read_pairing()?;
+            return Ok(None);
+        }
+        value
+            .map(serde_json::from_value::<DiskRecovery>)
+            .transpose()
+            .map_err(|_| RepositoryError::Corrupt)?
+            .map(|disk| {
+                if disk.version != 1 || disk.kind != "forget" {
+                    return Err(RepositoryError::Corrupt);
+                }
+                let marker = ForgetMarker {
+                    transaction: DeviceId::parse_record_key(&disk.transaction)
+                        .ok_or(RepositoryError::Corrupt)?,
+                    target: DeviceId::parse_record_key(&disk.target)
+                        .ok_or(RepositoryError::Corrupt)?,
+                    selection_cleared: disk.selection_cleared,
+                    credential_removed: disk.credential_removed,
+                    trust_removed: disk.trust_removed,
+                    record_removed: disk.record_removed,
+                };
+                if !marker.valid() {
+                    return Err(RepositoryError::Corrupt);
+                }
+                Ok(marker)
+            })
+            .transpose()
+    }
+}
+
+fn recovery_io_error(error: std::io::Error) -> RepositoryError {
+    if error.kind() == std::io::ErrorKind::InvalidData {
+        RepositoryError::Corrupt
+    } else {
+        RepositoryError::Unavailable
+    }
+}
+
+impl RecoveryJournal for LocalRecoveryJournal {
+    fn pairing(
+        &self,
+    ) -> Result<Option<crate::application::recovery::PairingMarker>, RepositoryError> {
+        self.load_pairing()
+    }
+    fn begin_pairing(
+        &self,
+        marker: crate::application::recovery::PairingMarker,
+        replaces: Option<DeviceId>,
+    ) -> Result<(), RepositoryError> {
+        self.start_pairing(marker, replaces)
+    }
+    fn advance_pairing(
+        &self,
+        marker: crate::application::recovery::PairingMarker,
+    ) -> Result<(), RepositoryError> {
+        self.update_pairing(marker)
+    }
+    fn clear_pairing(&self, transaction: DeviceId) -> Result<(), RepositoryError> {
+        self.remove_pairing(transaction)
+    }
+    fn save_backup(
+        &self,
+        backup: &crate::application::recovery::PairingBackup,
+    ) -> Result<(), RepositoryError> {
+        self.write_backup(backup)
+    }
+    fn load_backup(
+        &self,
+        transaction: DeviceId,
+    ) -> Result<crate::application::recovery::PairingBackup, RepositoryError> {
+        self.read_backup(transaction)
+    }
+    fn load(&self) -> Result<Option<ForgetMarker>, RepositoryError> {
+        let _guard = self
+            .file
+            .lock
+            .lock()
+            .map_err(|_| RepositoryError::Unavailable)?;
+        self.read_marker()
+    }
+
+    fn write(&self, marker: ForgetMarker) -> Result<(), RepositoryError> {
+        let _guard = self
+            .file
+            .lock
+            .lock()
+            .map_err(|_| RepositoryError::Unavailable)?;
+        if !marker.valid() || self.read_pairing()?.is_some() {
+            return Err(RepositoryError::Corrupt);
+        }
+        if let Some(existing) = self.read_marker()? {
+            if existing.transaction != marker.transaction
+                || existing.target != marker.target
+                || (existing.selection_cleared && !marker.selection_cleared)
+                || (existing.credential_removed && !marker.credential_removed)
+                || (existing.trust_removed && !marker.trust_removed)
+                || (existing.record_removed && !marker.record_removed)
+            {
+                return Err(RepositoryError::Corrupt);
+            }
+        } else if marker.selection_cleared {
+            return Err(RepositoryError::Corrupt);
+        }
+        self.file
+            .write(&DiskRecovery {
+                version: 1,
+                kind: "forget".into(),
+                transaction: marker.transaction.to_string(),
+                target: marker.target.to_string(),
+                selection_cleared: marker.selection_cleared,
+                credential_removed: marker.credential_removed,
+                trust_removed: marker.trust_removed,
+                record_removed: marker.record_removed,
+            })
+            .map_err(recovery_io_error)
+    }
+
+    fn clear(&self, transaction: DeviceId) -> Result<(), RepositoryError> {
+        let _guard = self
+            .file
+            .lock
+            .lock()
+            .map_err(|_| RepositoryError::Unavailable)?;
+        let marker = self.read_marker()?.ok_or(RepositoryError::Corrupt)?;
+        if marker.transaction != transaction
+            || !marker.selection_cleared
+            || !marker.credential_removed
+            || !marker.trust_removed
+            || !marker.record_removed
+        {
+            return Err(RepositoryError::Corrupt);
+        }
+        fs::remove_file(&self.file.path).map_err(recovery_io_error)?;
+        File::open(
+            self.file
+                .path
+                .parent()
+                .ok_or(RepositoryError::Unavailable)?,
+        )
+        .and_then(|parent| parent.sync_all())
+        .map_err(recovery_io_error)
+    }
 }
 
 struct JsonFile {
@@ -366,6 +547,8 @@ impl JsonFile {
             file.write_all(&bytes)?;
             file.sync_all()?;
             fs::rename(&temporary, &self.path)?;
+            // Rename is not durable until the directory entry is synced.
+            File::open(parent)?.sync_all()?;
             Ok(())
         })();
         if result.is_err() {

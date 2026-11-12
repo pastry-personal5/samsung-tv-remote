@@ -6,6 +6,15 @@ This document describes the current single-process implementation. The
 [Phase 2 target architecture](phase-2/target-architecture.md) plans a separate
 Control API Server with GUI and MCP clients; it is not implemented yet.
 
+The headless Tokio runtime in `application/runtime.rs` now owns all TV
+workflow, effects and retained operations. The Iced GUI calls the same typed
+service through a temporary in-process adapter. Pairing/re-pair, reconnect
+rotation and Forget use durable recovery markers; selection/configuration
+use fenced workers and durable reconciliation. See the [M7 implementation
+record](phase-2/milestone-07-architecture.md) and
+[completion evidence](phase-2/milestone-07-review.md). The separate background
+process and HTTP/MCP transports remain future milestones.
+
 Samsung TV Remote is one Rust package. Its dependency direction is
 `presentation → application → domain` and `infrastructure → application/domain`.
 `main.rs` wires the adapters. UI code never constructs Samsung wire frames or
@@ -19,7 +28,7 @@ owns a socket; application policy never imports Iced or macOS APIs.
 | `src/presentation/iced/` | Windows, input mapping, visual remote, view state, and user-facing feedback. |
 | `src/main.rs` | Composition of concrete adapters and the app. |
 
-The application coordinator owns the Selected TV, selection generation,
+The private runtime owner holds the Selected TV, selection generation,
 connection lifecycle, and one bounded command queue. Each request targets a
 specific saved device and returns a typed rejection or transport outcome.
 The Samsung session serializes writes on the secure port-8002 WebSocket.
@@ -44,7 +53,7 @@ channel does not report independent playback state, so a selected or
 reconnected TV starts unknown. A socket write records only the app's inferred
 next state; it does not observe the player.
 
-The Iced presentation maps pointer and keyboard input to typed requests and
+The Iced presentation maps pointer and keyboard input to typed service requests and
 projects application results into the current [UX specification](ux-gui.md).
 Sources, Apps, and Text Input remain placeholders. Native keyboard focus and
 screen-reader support need further verification; see [Phase 1](phase-1/phase-1.md).

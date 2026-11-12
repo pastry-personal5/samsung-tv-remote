@@ -1,8 +1,8 @@
 # P1-M13: Wake-on-LAN and Toggle Power
 
-Status: Active
+Status: Done
 
-Implementation complete; live-TV Wake verification deferred.
+Implementation and owner-reported manual acceptance complete (2026-11-11).
 
 ## Contracts and ownership
 

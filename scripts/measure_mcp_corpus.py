@@ -47,7 +47,7 @@ def schema(tool):
             properties[name] = {"enum": ["wired", "wifi", None]}
         elif name in {"candidate_id", "observation_id"}:
             properties[name] = {"type": "string", "minLength": 1, "maxLength": 64}
-        elif name.endswith("_id") or name in {"server_epoch", "operation_key"}:
+        elif name.endswith("_id") or name in {"server_epoch", "operation_key", "recovery_transaction"}:
             properties[name] = {"type": "string", "format": "uuid"}
         else:
             properties[name] = {"type": "string"}
@@ -60,6 +60,7 @@ def schema(tool):
     alternatives = {
         "probe_tv": ("candidate_id", "host"),
         "get_operation": ("operation_id", "operation_key"),
+        "forget_tv": ("expected_config_revision", "recovery_transaction"),
     }
     if tool["name"] in alternatives:
         first, second = alternatives[tool["name"]]
@@ -103,6 +104,8 @@ def sample_args(tool):
         fields.append("candidate_id")
     if tool["name"] == "get_operation":
         fields.append("operation_id")
+    if tool["name"] == "forget_tv":
+        fields.append("expected_config_revision")
     sample = {}
     for field in fields:
         name = field.split(":", 1)[0]
@@ -118,7 +121,7 @@ def sample_args(tool):
             sample[name] = "candidate-1"
         elif name == "observation_id":
             sample[name] = "obs-1"
-        elif name in {"server_epoch", "operation_key"} or name.endswith("_id"):
+        elif name in {"server_epoch", "operation_key", "recovery_transaction"} or name.endswith("_id"):
             sample[name] = "a2222222-2222-4222-8222-222222222222"
         else:
             sample[name] = "sample"

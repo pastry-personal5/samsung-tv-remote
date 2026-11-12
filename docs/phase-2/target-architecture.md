@@ -6,6 +6,10 @@ This is the target for [Phase 2](phase-2.md), not a description of the
 currently shipped single-process app. The [current architecture](../architecture.md)
 remains authoritative for code that has not migrated.
 
+M7's application owner and temporary in-process GUI adapter are implemented;
+see the [M7 architecture](milestone-07-architecture.md) for actual types and
+limits. The process/HTTP/MCP portions below remain the target for later work.
+
 ## Process and ownership
 
 ```mermaid
@@ -309,7 +313,10 @@ read/update/delete path or a safe user-assisted migration is demonstrated.
 Keychain denial or a locked Keychain is a visible blocked state, not an empty
 device list. macOS Local Network consent and TV-side Pairing approval cannot
 be bypassed; routine restarts must not re-prompt when permissions and signing
-identity remain stable.
+identity remain stable. One explicit user-assisted migration/Keychain approval
+is allowed; it is distinct from routine prompts. Phase 2 targets the owner’s
+Mac and local signed installation. Notarization and public distribution are
+outside this phase’s acceptance scope.
 
 ## Migration sequence
 

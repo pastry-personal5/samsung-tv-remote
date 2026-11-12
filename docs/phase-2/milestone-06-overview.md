@@ -1,6 +1,6 @@
 # P2-M6: Architecture and Contract
 
-Status: In progress
+Status: Active
 
 ## Goal
 
@@ -49,18 +49,17 @@ the refactor has explicit parity checks.
 - [x] The event subscription delivers an atomic initial snapshot plus later
   revisions, or proves retained replay from a snapshot cursor; a slow client
   has an explicit resynchronization path.
-- [ ] Threat and failure cases include loopback exposure, Origin validation,
-  distinct authenticated GUI/MCP client identities, credential bootstrap and
-  rotation, fast user switching, duplicate process startup, crashes, and
-  malformed requests. Compare detached on-demand launch with an app-bundled
-  LaunchAgent in a signed prototype; decide how the server survives GUI exit,
-  respects explicit Stop, and remains absent at login. The chosen MCP
-  revision, authorization mode, and Claude Code test target are recorded
-  without claiming untested compatibility. Record the minimum supported
-  macOS version before relying on a ServiceManagement or security API.
-- [ ] The endpoint decision covers a persistent per-user MCP URL, port
-  collision, unrelated listeners, fast user switching, and the limitation of
-  reconfiguring an already-running HTTP MCP client.
+- [x] Freeze the lifecycle and local access decision with focused signed
+  probes: detached launch survives GUI exit, duplicate launch/collision fails
+  closed, sticky Stop requires GUI Resume, and startup has no TV effect.
+  Specify Host/Origin, authenticated client identities, bootstrap, rotation,
+  logout and fast-user-switch behavior. Production enforcement is M8/M9;
+  cross-user and upgrade integration is M11. LaunchAgent registration is an
+  optional rejected-alternative experiment, not a completion gate.
+- [x] Freeze the stable per-user endpoint and Claude Code credential-helper
+  contract. Record CLI version and fake-endpoint negotiation evidence, port
+  collision behavior, and the active-client reconfiguration limitation.
+  Production endpoint tests belong to M8 and real Claude workflows to M10.
 - [x] The contract separates server process startup from TV network effects.
   MCP-only connection does not discover, pair, connect, or Wake a TV; the
   current GUI's launch reconnect is modeled as its own operation after attach.
@@ -80,25 +79,26 @@ the refactor has explicit parity checks.
   admission, deduplication, durable selection, late effect completions, and
   atomic subscription. Remaining numeric limits and platform choices are
   explicitly assigned to a milestone rather than assumed implemented.
-- [ ] Existing saved data and Keychain items have a non-destructive migration
-  and rollback plan. A synthetic old-GUI Keychain item is tested with the new
-  signed helper and same-signed-executable server mode; prompt, denial, lock,
-  and upgrade behavior are recorded. The normal GUI/MCP launch and token-use
-  path has zero routine prompts; an interaction-required result blocks without
-  an unattended prompt or reconnect retry loop. No token-store downgrade is
-  accepted to meet that target.
-  The development profile cannot access production Keychain items. Required
-  Local Network, signing, and any sandbox entitlements are inventoried. No
-  production implementation or client compatibility claim is inferred from
-  a prototype.
+- [ ] Freeze a non-destructive data/Keychain migration and rollback design.
+  In an isolated account, test a synthetic old-GUI item with candidate signed
+  process identities; record reads, update/delete, denied/locked access, and
+  prompt counts. Choose the server process shape from evidence, or record a
+  conditional choice and the exact M9 cutover blocker if the probe cannot
+  represent the final identity. One explicit user-assisted migration approval
+  is allowed; unattended access fails closed and routine use has zero prompts.
+  Actual same-identity upgrade/migration and rollback are M9 acceptance gates.
+  Development must use fake credentials or an isolated test namespace.
 - [x] Crash points between Keychain, trust, and repository writes for Pairing,
   re-pairing, and forget have a durable, non-secret reconciliation design or
   an explicit fail-closed recovery procedure; an in-memory partial flag is
   not accepted as crash recovery.
 
-Checked design items mean the proposed contract is documented and reviewable;
-they do not mean the server implements it or its future runtime tests pass.
-The three unchecked platform and migration gates still block M6 completion.
+Checked items mean the design is documented, not that runtime behavior
+passes. M6 stays Active until focused probe results, unresolved choices and
+owner acceptance are recorded. Production-server tests cannot block M6 when
+that server is first implemented in later milestones. The
+[acceptance and handoff record](milestone-06-acceptance.md) defines the exact
+boundary, evidence format, review fixes, and downstream test owners.
 
 ## References
 
@@ -114,9 +114,9 @@ The three unchecked platform and migration gates still block M6 completion.
 - [Human isolated-account test runbook](milestone-06-human-runbook.md)
 - [Requirement-by-requirement review](milestone-06-review.md)
 
-The documents above make the design reviewable, but the checklist is not
-complete. In particular, the old signed GUI Keychain experiment, fast-user
-switching and Local Network privacy tests, and signed-server Claude Code
-interop and model-visible token measurement have not passed. The contracts
-are candidates until those tests and fake-port sequence/crash tests validate
-them.
+The design is reviewable, but M6 remains Active. The focused synthetic
+Keychain experiment and process-choice acceptance remain open. Fast-user
+switching, Local Network privacy attribution, real signed-server Claude Code
+workflows and actual token measurement are downstream implementation gates
+listed in the acceptance and handoff record, not prerequisites for M6 design
+completion.

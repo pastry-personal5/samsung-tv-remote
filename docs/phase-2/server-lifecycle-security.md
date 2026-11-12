@@ -55,7 +55,8 @@ HTTP MCP URL; a transient port cannot be repaired by an auth-header helper
 alone. First allocation probes conflicts. A later bind collision must fail
 closed, not attach to the occupant or silently switch the MCP URL. The GUI
 may offer an app-managed endpoint reconfiguration for a future client session;
-M6 must test the active-session limitation. Random high-port allocation makes
+M6 must document the active-session limitation; M10 must test it with the
+implemented endpoint. Random high-port allocation makes
 collisions unlikely but cannot guarantee the same TCP port to simultaneous
 macOS users. Fast user switching must be tested explicitly.
 
@@ -139,6 +140,8 @@ signing/entitlement, accessibility, and legacy-item migration tests; it is not
 a flag change to assume safe or prompt-free:
 [Mac Keychain implementations](https://developer.apple.com/documentation/technotes/tn3137-on-mac-keychains).
 
+One explicit user-assisted migration/Keychain approval is allowed by the
+2026-11-11 owner decision; subsequent routine access must not prompt.
 P2-M6 must create a synthetic legacy item using the *old signed GUI* and test
 read, update, and delete with both proposed *new signed server* process shapes,
 including after an upgrade and with a locked Keychain. Count unexpected OS
@@ -219,10 +222,10 @@ behavior); do not add them blindly to an unsandboxed build. No root daemon,
 Accessibility, Screen Recording, Input Monitoring, or Apple Events permission
 is required for the stated architecture.
 
-For outside-App-Store distribution, the current local self-signed bundle is
-development evidence, not a prompt-free release artifact. Plan Developer ID
-signing of each nested executable, hardened runtime, and notarization in the
-release path, while preserving a local-signing development path:
+Phase 2 targets the owner’s Mac and a local signed installation, with no
+notarization requirement. Verify signatures of all nested executables and
+record the stable local identity. If public distribution is added in a later
+phase, separately plan Developer ID signing, hardened runtime and notarization:
 [Apple notarization requirements](https://developer.apple.com/documentation/security/notarizing-macos-software-before-distribution).
 Where applicable, Gatekeeper's initial launch confirmation, macOS Local
 Network consent, any legacy Keychain ACL/unlock prompt, TV-side Pairing

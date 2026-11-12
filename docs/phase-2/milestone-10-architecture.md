@@ -30,7 +30,8 @@ mutations; same-key calls with changed arguments are rejected. A probe result
 gives a bounded observation ID and safe certificate fingerprint. The Pairing
 confirmation tool includes that observation and matching fingerprint; the TV
 still asks its owner to approve. Forgetting a saved TV uses an explicit
-confirmation token bound to its device ID. These checks validate an explicit
+`confirm_device_id` equal to the requested saved device ID. This is a
+typed confirmation field, not a server-issued approval token. These checks validate an explicit
 second step but cannot establish that a human approved an agent's call. The
 adapter never receives the stored TV pairing token.
 

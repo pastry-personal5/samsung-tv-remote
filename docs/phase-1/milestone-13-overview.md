@@ -1,8 +1,8 @@
 # P1-M13: Wake-on-LAN and Toggle Power
 
-Status: Active
+Status: Done
 
-Implementation complete; live-TV Wake verification deferred.
+Implementation and owner-reported manual acceptance complete (2026-11-11).
 
 ## Goal
 
@@ -74,12 +74,13 @@ the flow starts Wake when its configuration permits.
 - [x] Wake states remain understandable without color or animation.
 - [x] Deterministic tests and documented Cargo gates pass; hardware evidence,
   if gathered, is sanitized and does not claim unmeasured wake latency.
-- [ ] Physical Wake, macOS Local Network permission recovery, and time to a
-  usable remote connection receive hardware acceptance.
+- [x] Physical Wake, macOS Local Network permission recovery, and time to a
+  usable remote connection receive owner-reported manual acceptance.
 
-Live-TV Wake, macOS Local Network permission recovery, and measured time to
-usable remote connection have not been verified on hardware. A successful UDP
-send proves only that the packet was handed to the local network stack.
+On 2026-11-11, the owner confirmed that the milestone’s human testing is
+complete and working. This records owner acceptance; no numeric latency
+measurement was supplied. A successful UDP send alone still proves only that
+the packet was handed to the local network stack.
 
 ## References
 

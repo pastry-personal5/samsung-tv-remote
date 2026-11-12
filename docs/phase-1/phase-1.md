@@ -1,6 +1,6 @@
 # Phase 1: Foundation and First Live Control
 
-Status: Active
+Status: Done
 
 Goal: Establish the macOS app, trusted local control, and usable Power and
 Remote views.
@@ -30,11 +30,11 @@ Completed plans are retained in the [archive](../archive/phase-1/).
 | P1-M10 | First Live TV Connection and Control | Done | [Overview](../archive/phase-1/milestone-10-overview.md) · [Architecture](../archive/phase-1/milestone-10-architecture.md) · [Hardware matrix](../archive/phase-1/milestone-10-hardware-matrix.md) |
 | P1-M11 | Clean Architecture Refactoring | Done | [Overview](../archive/phase-1/milestone-11-overview.md) · [Architecture](../archive/phase-1/milestone-11-architecture.md) |
 | P1-M12 | Dark GUI and Focused Navigation | Done | [Overview](../archive/phase-1/milestone-12-overview.md) · [Architecture](../archive/phase-1/milestone-12-architecture.md) |
-| P1-M13 | Wake-on-LAN and Toggle Power | Active | [Overview](milestone-13-overview.md) · [Architecture](milestone-13-architecture.md) |
+| P1-M13 | Wake-on-LAN and Toggle Power | Done | [Overview](milestone-13-overview.md) · [Architecture](milestone-13-architecture.md) |
 | P1-M14 | Remote and Settings GUI Refinement | Done | [Overview](milestone-14-overview.md) · [Architecture](milestone-14-architecture.md) |
 
-M13 is implemented while physical Wake, permission recovery, and latency
-verification remain deferred. M14 is complete: native layout review and all
+M13 is complete: the owner confirmed successful human testing on 2026-11-11;
+no numeric latency measurement was supplied. M14 is complete: native layout review and all
 documented Cargo and bundle gates passed. Iced/macOS keyboard focus and
 screen-reader exposure remain product follow-ups, and playback state remains
 inferred until a supported monitoring integration is added. M10 was closed by

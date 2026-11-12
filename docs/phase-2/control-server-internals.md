@@ -7,6 +7,12 @@ owns platform hypotheses that require signed-bundle proof. This document
 defines the server's internal ownership and execution model. It does not
 choose an HTTP crate or claim that macOS permission and Keychain gates pass.
 
+The application portion landed in M7; the [implementation record](milestone-07-architecture.md)
+and [completion review](milestone-07-review.md) supersede proposed internal
+queue details and limits below. In particular, joined completions have their
+own bounded capacity rather than sharing the external mailbox. Server process,
+HTTP/MCP and access-gate sections remain proposed.
+
 ## Design decisions
 
 1. One per-user server process hosts `/v1` and `/mcp`, with one headless
@@ -139,11 +145,13 @@ For a new, well-formed mutation:
    preconditions. Same typed payload returns the recorded receipt/outcome;
    changed payload is a conflict. Compare normalized typed values, not raw
    JSON whitespace or field order.
-3. For a new key, the owner checks explicit target and attempt/generation,
-   trust/pairing/connection and capacity policy. It reserves an operation
-   record and any required queue slot before scheduling an effect. An
-   application-level rejection is retained with the key within the stated
-   window; malformed or unauthenticated input never reaches this registry.
+3. For a current-epoch new key, reserve registry space before evaluating
+   mutable target, attempt/generation, trust/pairing/connection and effect
+   capacity policy. A policy rejection is retained with the key and exposes
+   operation metadata even when its HTTP status is an error. Ingress or
+   registry saturation is not admitted. Reserve any required queue slot
+   before scheduling an effect; known duplicates need no additional slot.
+   Malformed or unauthenticated input never reaches this registry.
 4. The owner returns a receipt or typed rejection. Effect completion enters
    the owner as a tagged message; only the owner changes lifecycle, records
    a terminal outcome, and advances event revision.
@@ -241,9 +249,9 @@ facts, never an empty saved-TV list. The signed old-GUI/new-server Keychain
 access test remains a P2-M6/P2-M9 release gate.
 
 In-memory blocked state alone is insufficient across a crash between writes
-to different stores. P2-M6 must choose and test a non-secret durable recovery
-marker or an equivalent reconciliation method for Pairing, re-pairing, and
-forget. The server must fail closed on an incomplete setup transaction after
+to different stores. P2-M6 must specify a non-secret durable recovery marker
+or equivalent reconciliation method for Pairing, re-pairing, and forget; M7
+implements and tests it with crash injection. The server must fail closed on an incomplete setup transaction after
 restart; it may not infer that missing preferences imply the Keychain item
 was removed. This is a design gate, not a claim that the current stores are
 transactional. Any marker is owner-only and contains no Pairing token or raw

@@ -1,17 +1,12 @@
 use super::view_model::PrimaryView;
+use crate::application::control_service::{Receipt, ServiceError, Snapshot};
 use crate::application::tv_address::TvHost;
-use crate::application::tv_control_coordinator::{
-    ConnectFlowError, PairFlowError, SessionPackage, WakeFailure,
-};
-use crate::application::tv_discovery::DiscoveryError;
-use crate::application::tv_session::{ProbeObservation, TvSessionError, TvSessionEvent};
-use crate::application::tv_setup_service::ForgetResult;
 use crate::application::wake::WakeInterface;
-use crate::application::wake_transport::WakeSendError;
 use crate::application::SendRemoteAction;
 use crate::domain::DeviceId;
 use crate::domain::RemoteAction;
 use ::iced::window;
+use std::sync::Arc;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum SettingsPage {
@@ -43,68 +38,29 @@ pub enum Message {
     Wake,
     CancelWake,
     WakeTick,
-    PowerProbeFinished {
-        attempt: u64,
-        generation: u64,
-        result: Result<SessionPackage, ConnectFlowError>,
-    },
-    WakeSent {
-        attempt: u64,
-        generation: u64,
-        device: DeviceId,
-        result: Result<(), WakeSendError>,
-    },
-    WakeReconnected {
-        attempt: u64,
-        generation: u64,
-        device: DeviceId,
-        result: Result<SessionPackage, WakeFailure>,
-    },
     WakeWiredChanged(String),
     WakeWifiChanged(String),
     WakeInterfaceSelected(WakeInterface),
     WakeInterfaceCleared,
     TvAddressChanged(String),
     DiscoverTv,
-    DiscoveryFinished {
-        attempt: u64,
-        result: Result<Vec<TvHost>, DiscoveryError>,
-    },
     UseCandidate(TvHost),
     ProbeCandidate(TvHost),
     ProbeTv,
     /// Checks the selected saved TV without opening Settings.
     CheckSelectedTv,
-    ProbeFinished {
-        attempt: u64,
-        host: TvHost,
-        result: Result<ProbeObservation, TvSessionError>,
-    },
     ConfirmAndPair,
     ConfirmAndRepair,
-    PairFinished {
-        attempt: u64,
-        replace: Option<DeviceId>,
-        result: Result<SessionPackage, PairFlowError>,
-    },
-    StaleSetupCleaned(ForgetResult),
     ConnectSelected,
-    ConnectFinished {
-        attempt: u64,
-        generation: u64,
-        result: Result<SessionPackage, ConnectFlowError>,
-    },
     ForgetSelected,
-    ForgetFinished {
-        id: DeviceId,
-        result: ForgetResult,
-    },
     SelectSaved(DeviceId),
-    SessionEvent {
-        generation: u64,
-        session_id: u64,
-        event: TvSessionEvent,
-    },
+    RuntimeStarted(Arc<super::in_process::InProcess>),
+    ServiceSnapshot(Snapshot),
+    ServiceResnapshot(Snapshot),
+    ServiceResult(Receipt),
+    Admitted(u64, Result<Receipt, ServiceError>),
+    ServiceUnavailable,
+    Drained,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

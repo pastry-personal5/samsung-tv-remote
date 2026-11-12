@@ -1,6 +1,32 @@
 # P2-M6 requirement review
 
-Reviewed 2026-10-15 against the current worktree. **M6 remains in progress.**
+## Human-run review: 2026-11-12
+
+Reviewed the handoff script, both signed probe builders, the Swift Keychain
+probe, and the isolated-account runbook against the current acceptance record.
+The review found and corrected these handoff issues:
+
+| Finding | Correction |
+| --- | --- |
+| Required Keychain setup depended on the rejected, optional LaunchAgent build | Added `--keychain-only`; the required run now stages and installs just the Keychain probe and legacy GUI. Full staging remains available for optional research. |
+| The install block set `stage` inside a subshell, so later refresh commands lost the path | Moved the assignment into the parent Terminal and documented resetting it after a new login or Terminal. |
+| Bundle-only identity output omitted the separately signed helper; staging HEAD could be mistaken for a binary build revision | Record the helper's code identifier/CDHash separately and label staging HEAD explicitly. A valid GUI signature does not establish that it is a legacy pairing build. |
+| A failed verify/delete after replacement could leave an unusable disposable token | Documented stopping that case, forgetting the disposable saved TV and pairing again before the helper's separate mutation case. |
+
+The existing probe checks the exact persisted `dev_<decimal>` account and
+isolation variables before accessing Keychain, keeps credential values out
+of output, disables interaction, and verifies replacement and final absence.
+Automated fixtures cover input rejection and signed handoff preparation;
+they do not supply old-GUI Keychain evidence. No human Keychain result or
+process-choice acceptance is established by this review. M6 remains Active.
+
+## Historical requirement inventory
+
+Historical review, 2026-10-15. The 2026-11-11
+[acceptance and handoff record](milestone-06-acceptance.md) supersedes the gate
+assignments below; this table preserves the earlier evidence inventory.
+
+Reviewed 2026-10-15 against that worktree. **M6 remains in progress.**
 The candidate contract and probes are reviewable inputs, not an implemented
 server or a completed signed migration. This table maps the overview's
 completion checklist to evidence and the remaining proof.

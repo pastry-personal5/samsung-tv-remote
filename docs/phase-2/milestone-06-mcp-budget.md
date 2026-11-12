@@ -18,17 +18,22 @@ behavior in the installed target and verify the signed app endpoint.
 
 | Corpus item | Calls | Tool search on proxy | All tools upfront proxy |
 | --- | ---: | ---: | ---: |
-| Inspect selected | 2 | 408 | 1,898 |
-| Send remote action | 3 | 826 | 2,072 |
-| Wake and inspect outcome | 3 | 775 | 2,071 |
-| Discover, probe, Pair | 5 | 1,370 | 2,376 |
-| Forget and inspect outcome | 4 | 993 | 2,198 |
-| Stale selection | 2 | 574 | 1,960 |
-| Lost or uncertain result | 3 | 832 | 2,078 |
+| Inspect selected | 2 | 408 | 1,962 |
+| Send remote action | 3 | 826 | 2,136 |
+| Wake and inspect outcome | 3 | 775 | 2,135 |
+| Discover, probe, Pair | 5 | 1,384 | 2,440 |
+| Forget and inspect outcome | 4 | 1,023 | 2,262 |
+| Stale selection | 2 | 574 | 2,024 |
+| Lost or uncertain result | 3 | 832 | 2,142 |
 
-The 13-tool semantic catalog is 1,606 proxy units, plus 83 for the shared
+The M7 handoff adds selected-generation Wake edits and explicit guarded
+recovery transactions; Forget requires either the ordinary config revision
+or the recovery transaction. The table above was regenerated with those
+fields on 2026-11-12.
+
+The 13-tool semantic catalog is 1,670 proxy units, plus 83 for the shared
 instruction. A straightforward remote-key-per-tool catalog grows to 26 tools
-and 3,069 units before any workflow. The largest sampled result sequence
+and 3,132 units before any workflow. The largest sampled result sequence
 adds 257 units when text duplicates structured content; ignoring that copy
 would understate the Pairing workflow. The full fingerprint
 and guarded confirmations remain in the corpus even when they cost context.

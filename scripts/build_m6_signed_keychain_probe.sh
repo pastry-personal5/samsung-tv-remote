@@ -9,7 +9,18 @@ if [[ ! -f "$identity_file" ]]; then
     exit 2
 fi
 identity="$(<"$identity_file")"
-probe_dir="$(mktemp -d "$repo_root/target/m6-keychain.XXXXXX")"
+# Keep an unfinished build outside the staging script's discovery glob.
+# A compile/signing failure must never shadow the last complete bundle.
+mkdir -p "$repo_root/target"
+probe_dir="$(mktemp -d "$repo_root/target/.m6-keychain.XXXXXX")"
+published_dir="$repo_root/target/m6-keychain.${probe_dir##*.}"
+published=0
+cleanup() {
+    if (( ! published )); then
+        rm -rf -- "$probe_dir"
+    fi
+}
+trap cleanup EXIT
 bundle="$probe_dir/M6 Keychain Probe.app"
 mkdir -p "$bundle/Contents/MacOS" "$bundle/Contents/Helpers"
 mkdir -p "$repo_root/target/m6-swift-module-cache"
@@ -33,4 +44,11 @@ codesign --force --sign "$identity" --timestamp=none \
     "$bundle/Contents/Helpers/m6-keychain-probe-helper"
 codesign --force --sign "$identity" --timestamp=none "$bundle"
 codesign --verify --deep --strict "$bundle"
-print "Signed probe bundle (not run): $bundle"
+# Publish only a verified bundle; staging never sees the intermediate tree.
+if [[ -e "$published_dir" ]]; then
+    print -ru2 -- "Refusing to replace existing probe: $published_dir"
+    exit 2
+fi
+mv -- "$probe_dir" "$published_dir"
+published=1
+print "Signed probe bundle (not run): $published_dir/${bundle:t}"

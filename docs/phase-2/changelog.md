@@ -2,6 +2,109 @@
 
 Status: Active
 
+- 2026-11-12 — Reviewed M7 and fixed concurrent Pair/Wake cancellation,
+  terminal connection projections, and successful preference-write profile
+  reconciliation. Added six deterministic regression tests; the M7 review
+  records the findings and evidence. Platform acceptance gates remain open.
+
+- 2026-11-12 — Completed M7 under the recorded entry exception. All GUI TV
+  intents now use one headless service; removed the legacy presentation effect
+  runners and mutable public coordinator. Added prepared Pairing commits,
+  journaled first-Pairing/re-pair/rotation recovery, client-bound expiring
+  candidates/observations, captured-config Wake, bounded worker supervision,
+  indexed retained results and GUI resnapshot/result-race handling. Storage
+  timeouts retain fences, and a prepared connection cannot install inside an
+  uncommitted selection fence. Recovery tests cover 46 interruption points
+  across Forget, setup commits and compensation. Joint production-capacity
+  heap/stage measurements and the verification matrix are in the M7 review.
+  Finalized 10-second storage/send reporting and five-second drain reporting,
+  preserved 2-second disconnected Power, 30-second Wake readiness and
+  75-second Connect including their storage stages. M6 signed Keychain and
+  process-choice acceptance remains open; no HTTP/background server or
+  production credential migration is claimed.
+
+- 2026-11-12 — Rewrote the M6 human runbook for a clean restart in the
+  `m6probe` desktop account after an existing-installation stop. Main-account
+  preparation now initializes the saved signing identity. Reset verifies the
+  handoff first, unregisters any optional agent before removal, clears
+  disposable Keychain items, removes the test apps/data, and reinstalls before
+  a new pairing. Resetting or staging is not human acceptance; M6 stays Active.
+
+- 2026-11-12 — Reviewed M6's by-human scripts and instructions. Added
+  `--keychain-only` handoffs so optional LaunchAgent failures cannot block
+  required Keychain evidence. Fixed handoff-path scope for refresh, separated
+  main/helper identity reporting and staging/build provenance, and clarified
+  recovery after a partial token replacement. Extended disposable staging
+  fixtures for both modes and argument validation. Human execution and
+  process-choice acceptance remain open; M6 stays Active.
+
+- 2026-11-12 — Added journaled headless Forget and exact-target/transaction
+  recovery. Startup loads pending cleanup before allowing control and never
+  retries credential access on its own. Selection clears durably before
+  deletion; partial results retain per-store facts and block the profile.
+  Preference and journal renames/removal sync the parent directory. Temporary
+  file/fake credential tests interrupt twelve persistence boundaries and
+  verify restart/recovery. Added client-scoped operation lookup by ID.
+  Pairing/rotation recovery and GUI cutover remain incomplete.
+
+- 2026-11-12 — Added the M7 five-second drain reporting boundary and a
+  separate settlement handle. Mutation admission closes while read-only
+  queries remain available. Unresolved storage stays supervised/fenced;
+  interrupted writes retain uncertain outcomes and queued writes remain
+  not-sent. Fake-time tests cover blocked startup, late storage completion,
+  pending effects, idle completion and FIFO outcomes. Durable recovery,
+  remaining runtime workflows and GUI migration are still outstanding.
+
+- 2026-11-12 — Fixed probe build publication after a handoff selected an
+  unfinished LaunchAgent app. Builders now keep temporary bundles outside
+  staging discovery and publish only after deep signature verification.
+  Staging reports the failed source and rebuild command without substituting
+  an older build. Disposable fixtures reproduce the resource-envelope error
+  and verify the copy path; no production identity or credential item was used.
+
+- 2026-11-12 — Refreshed the M6 by-human runbook and added a reproducible
+  signed-bundle handoff helper. The previous temporary directory was absent;
+  existing probe/GUI bundles passed host signature checks and were copied to
+  a fresh, test-account-readable directory with a path-filled runbook.
+  Required Keychain cases now precede optional LaunchAgent research, with
+  explicit results, prompt counts, failure stops and cleanup. Human Keychain
+  execution and process-choice acceptance remain pending; M6 is Active.
+
+- 2026-11-12 — Recorded the owner's explicit M7 entry exception while M6's
+  Keychain and process gates remain open. Added an initial headless owner,
+  typed bounded service, client-scoped retained operations, atomic events,
+  asynchronous restore and fenced selection/configuration, plus fake-port
+  tests. Session writes progress without GUI polling and uncertain writes
+  reset playback inference. M7 remains in progress: setup recovery, Wake,
+  GUI migration and measured handoff limits are outstanding.
+- 2026-11-11 — Reviewed the M7 plan against current code and the M6 handoff.
+  Added the extraction sequence, typed-service and temporary-GUI boundaries,
+  admission/retention ordering, storage serialization and crash recovery,
+  stage timing/capacity evidence, and a deterministic verification matrix.
+  Identified startup duplicate deletion, synchronous owner storage, combined
+  approval/commit, and Wake-edit cancellation as explicit migration work.
+  M7 remains Planned; M6's open Keychain/process gate is not waived.
+
+- 2026-11-11 — Re-ran M6 completion probes on macOS 27.2.1 with the existing
+  local signing identity. Signed lifecycle/collision/Stop/Resume/crash checks
+  passed; Claude Code 2.1.322 negotiated the planned revision against the fake
+  endpoint. Proxy budgets reproduced and all Cargo gates passed (141 tests).
+  Accepted lifecycle and endpoint feasibility for design freeze. Rebuilt and
+  verified the signed Keychain probe without accessing an item. The isolated
+  legacy-Keychain experiment and dependent process-choice acceptance remain
+  open, so M6 stays Active.
+
+- 2026-11-11 — Reviewed P2-M6 with the owner. M6 accepts design and focused
+  probes; production verification belongs to M7–M11. Target is the owner's
+  Mac with local signing and no notarization. Allow one explicit migration/
+  Keychain approval, then zero routine prompts. Keep on-demand launch,
+  GUI-close persistence, no login start and sticky Stop/GUI Resume. MCP clients
+  own human approval of explicit confirmation steps; TV Pairing approval
+  remains mandatory. Added the acceptance/handoff record, clarified retained
+  policy failures and supervision deadlines, and removed rejected LaunchAgent
+  research from mandatory gates. Synthetic Keychain feasibility and final
+  process-choice acceptance remain open; M6 is Active, not Done.
+
 - 2026-10-15 — Reviewed the M6 contract against bounded retention and
   multi-client events. Unretained operation lookup now reports an unknown
   outcome instead of claiming expiry was observed; every subscriber receives

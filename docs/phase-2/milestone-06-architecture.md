@@ -1,6 +1,6 @@
 # P2-M6: Architecture and Contract
 
-Status: In progress
+Status: Active
 
 ## Approach
 
@@ -47,8 +47,9 @@ multi-client. Mutations carry a client-scoped operation key. Document the
 same-key/different-payload conflict, result expiry, changed server epoch,
 and an unknown result after crash; never imply exactly-once TV execution.
 
-Prototype the [lifecycle options](server-lifecycle-security.md) in a signed
-bundle. Fix a persistent per-user MCP URL and an on-demand process launch path
+Prototype detached on-demand launch in a signed bundle and document the
+rejected [lifecycle options](server-lifecycle-security.md). LaunchAgent
+registration is optional evidence, not a prerequisite for the chosen design. Fix a persistent per-user MCP URL and an on-demand process launch path
 that survives GUI exit without login startup; test collision and fast-user
 switching, not just a free port. Define sticky explicit Stop versus crash,
 logout, and GUI close. Choose a credential bootstrap that does not expose
@@ -66,10 +67,15 @@ executable. Measure legacy access, upgrades, and whether noninteractive reads
 fail closed rather than triggering a prompt loop. Decide the process shape
 before locking the M9 bundle design. Inventory
 macOS Local Network privacy, responsible code, signing stability, and sandbox
-entitlements before promising a no-click migration. Distinguish one-time OS
+entitlements before accepting the migration design. One explicit user-assisted
+migration approval is allowed; routine operation must not prompt. Distinguish
+one-time OS
 or TV consent from routine operation that the app can automate.
 
 Use an explicit migration table and sequence diagrams in the target design.
 Review the API contract against fake transport scenarios before moving code.
+Use the [acceptance and handoff record](milestone-06-acceptance.md) to separate
+M6 design/probe evidence from M7–M11 implementation tests. Production HTTP,
+MCP, signed upgrade, and real-profile rollback are downstream gates.
 Keep real TV addresses, certificates, tokens, and network captures out of
 fixtures and review documents.
