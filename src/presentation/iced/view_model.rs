@@ -227,6 +227,7 @@ impl MessageFeed {
 /// without exposing Iced or application implementation details.
 #[derive(Debug, Clone)]
 pub struct RemoteControlViewState {
+    pub service_available: bool,
     /// Safe display information for the selected device, if any.
     pub selected_device: Option<crate::DeviceDisplay>,
     /// The application-owned generation associated with the projection.
@@ -264,6 +265,7 @@ impl RemoteControlViewState {
             .find(|(action, _)| *action == RemoteAction::Up)
             .and_then(|(_, reason)| *reason);
         Self {
+            service_available: true,
             selected_device,
             selection_generation,
             disabled_reason,
@@ -285,6 +287,9 @@ impl RemoteControlViewState {
     }
 
     pub fn action_disabled_reason(&self, action: RemoteAction) -> Option<&'static str> {
+        if !self.service_available {
+            return Some("Control server is unavailable. Check the connection status.");
+        }
         self.action_statuses
             .iter()
             .find(|(candidate, _)| *candidate == action)
@@ -346,13 +351,45 @@ impl ViewModel {
 
     /// Updates the control state from the application state.
     pub fn update_control_state(&mut self, app_state: &ControlState) {
+        let available = self.control_state.service_available;
         self.control_state = RemoteControlViewState::from_application_state(app_state);
+        self.set_service_available(available);
+    }
+    pub fn set_service_available(&mut self, available: bool) {
+        self.control_state.service_available = available;
+        self.control_state.disabled_reason =
+            self.control_state.action_disabled_reason(RemoteAction::Up);
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn disconnected_server_disables_actions_without_erasing_selected_identity() {
+        let mut state = ControlState::none();
+        state.select_device(crate::DeviceDisplay::new(
+            crate::DeviceId::new(1),
+            "Synthetic TV",
+        ));
+        let generation = state.selection_generation();
+        state.set_pairing_state(generation, PairingState::Ready);
+        state.set_connection_state(generation, ConnectionState::Ready);
+        let mut view = ViewModel::new(&state);
+        assert!(view.control_state().remote_actions_enabled());
+        view.set_service_available(false);
+        assert!(!view.control_state().remote_actions_enabled());
+        assert!(view
+            .control_state()
+            .action_disabled_reason(RemoteAction::PowerToggle)
+            .is_some());
+        assert!(view.control_state().selected_device.is_some());
+        view.update_control_state(&state);
+        assert!(!view.control_state().remote_actions_enabled());
+        view.set_service_available(true);
+        assert!(view.control_state().remote_actions_enabled());
+    }
 
     #[test]
     fn new_state_has_no_selected_tv() {

@@ -4,6 +4,22 @@ Status: Partial prototype, 2026-10-15. These observations do not prove a
 production server, legacy Keychain migration, macOS privacy attribution, or
 Claude Code compatibility.
 
+## Credential scope update: 2026-11-12
+
+The owner confirmed no device-key migration is needed, including synthetic
+legacy migration. Earlier legacy migration/probe requirements below are
+superseded by this decision. Signed fresh-credential Keychain behavior remains
+M9 verification; existing items are not deleted or transferred by this scope
+change. See the [current acceptance record](milestone-06-acceptance.md#owner-credential-scope-update-2026-11-12).
+
+## Owner decision update: 2026-11-12
+
+The owner selected on-demand background launch using the same signed app
+executable in `--server` mode. The signed Keychain experiment remains open;
+process selection does not establish legacy access or accept M6. Earlier
+candidate comparisons below retain their research/historical context. See the
+[current acceptance record](milestone-06-acceptance.md#owner-process-selection-2026-11-12).
+
 ## Human-run review: 2026-11-12
 
 The [review record](milestone-06-review.md#human-run-review-2026-11-12)

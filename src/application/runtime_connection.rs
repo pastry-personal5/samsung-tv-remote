@@ -277,10 +277,11 @@ impl Owner {
             .set_connection_state(context.generation, super::super::ConnectionState::Ready);
         self.adopt_session(context.generation, connection);
         if self.wakes.remove(&id).is_some() {
-            self.coordinator.wake_stage = WakeStage::Ready;
             if context.mode == ConnectionMode::Power {
+                self.coordinator.wake_stage = WakeStage::Connected;
                 self.finish(id, Outcome::Connected);
             } else {
+                self.coordinator.wake_stage = WakeStage::Ready;
                 self.finish(id, Outcome::Wake(WakeStage::Ready));
             }
         } else {

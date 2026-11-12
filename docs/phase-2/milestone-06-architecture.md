@@ -2,6 +2,14 @@
 
 Status: Active
 
+## Credential scope update: 2026-11-12
+
+The owner confirmed no device-key migration is needed, including synthetic
+legacy migration. Earlier legacy migration/probe requirements below are
+superseded by this decision. Signed fresh-credential Keychain behavior remains
+M9 verification; existing items are not deleted or transferred by this scope
+change. See the [current acceptance record](milestone-06-acceptance.md#owner-credential-scope-update-2026-11-12).
+
 ## Approach
 
 Start from the current `TvControlCoordinator`, Iced `App`, dispatcher, setup
@@ -61,11 +69,12 @@ credential and protocol revision. The current Keychain service name is shared
 across preference directories, so development isolation needs a fake
 credential port or a test-only namespace.
 
-Use synthetic Keychain items created by the old signed GUI to compare a
-distinct signed helper with a separate `--server` process of the same signed
-executable. Measure legacy access, upgrades, and whether noninteractive reads
-fail closed rather than triggering a prompt loop. Decide the process shape
-before locking the M9 bundle design. Inventory
+The owner selected on-demand background launch using the same signed
+executable in `--server` mode on 2026-11-12. Use synthetic Keychain items
+created by the old signed GUI to verify the selected identity. Measure legacy
+access, upgrades, and whether noninteractive reads fail closed rather than
+triggering a prompt loop. The distinct helper remains historical comparison
+research, not the selected implementation. Inventory
 macOS Local Network privacy, responsible code, signing stability, and sandbox
 entitlements before accepting the migration design. One explicit user-assisted
 migration approval is allowed; routine operation must not prompt. Distinguish

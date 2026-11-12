@@ -484,7 +484,9 @@ fn create_action_disabled_overlay<'a>(
     content: Element<'a, Message>,
 ) -> Element<'a, Message> {
     // Create overlay message based on the reason
-    let message = if control_state.selected_device.is_none() {
+    let message = if !control_state.service_available {
+        "Control server is unavailable. Check the connection status."
+    } else if control_state.selected_device.is_none() {
         "No TV selected. Open Settings to choose a TV."
     } else if !control_state.pairing.guidance.is_empty() {
         control_state.pairing.guidance
@@ -495,7 +497,7 @@ fn create_action_disabled_overlay<'a>(
     };
 
     // Determine if Do Magic button should be shown
-    let can_do_magic = control_state.selected_device.is_some();
+    let can_do_magic = control_state.service_available && control_state.selected_device.is_some();
     let is_wake_busy = matches!(
         wake_stage,
         WakeStage::CheckingConnection | WakeStage::PacketSending | WakeStage::Reconnecting
@@ -583,7 +585,7 @@ fn power_toggle_button(
     let enabled_device = control_state
         .selected_device
         .as_ref()
-        .filter(|_| !busy && (connected || configured));
+        .filter(|_| control_state.service_available && !busy && (connected || configured));
     let reason = if enabled_device.is_some() {
         "Power Toggle"
     } else if busy {
@@ -713,7 +715,8 @@ fn power_view(
     let connected = control_state
         .action_disabled_reason(RemoteAction::PowerToggle)
         .is_none();
-    let wake_enabled = configured
+    let wake_enabled = control_state.service_available
+        && configured
         && !connected
         && !active
         && stage != WakeStage::Ready
@@ -736,7 +739,8 @@ fn power_view(
         tooltip::Position::Top,
     )
     .style(tooltip_style);
-    let retry_enabled = configured
+    let retry_enabled = control_state.service_available
+        && configured
         && !connected
         && matches!(
             stage,
@@ -763,8 +767,16 @@ fn power_view(
                         wake_button,
                         power_toggle_button(control_state, stage, configured, true),
                         retry_button,
-                        action_button(Icon::Cancel, "Cancel", true, active)
-                            .on_press_maybe(active.then_some(Message::CancelWake))
+                        action_button(
+                            Icon::Cancel,
+                            "Cancel",
+                            true,
+                            active && control_state.service_available
+                        )
+                        .on_press_maybe(
+                            (active && control_state.service_available)
+                                .then_some(Message::CancelWake)
+                        )
                     ]
                     .spacing(8)
                     .align_y(Alignment::Center),

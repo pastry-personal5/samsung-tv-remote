@@ -1,73 +1,63 @@
-# P2-M6 `/v1` operation examples
+# Control API examples
 
-These are synthetic **contract examples**, not responses from a running
-server. Each mutation also carries the authenticated client's identity from
-the access gate, never from JSON. `E`, `A`, `B`, `K`, `P`, `O` below abbreviate
-UUID values only to keep the table readable; real DTOs use full UUID strings.
-`G=7` is the client's observed generation and `R=3` a saved configuration
-revision. Examples are independent, not one chronological transcript. The
-[contract](milestone-06-contract.md) defines the route and error map.
+M8 `/v1` examples for the isolated fake profile. Production GUI cutover is M9;
+MCP tools are M10. All addresses, IDs and fingerprints here are synthetic.
+The [wire decisions](milestone-08-wire.md) define exact encodings and bounds.
 
-| Operation | Example request fields after authentication | Receipt / terminal fact |
+In the table, `E` means the current full canonical epoch, `K` a new canonical
+UUID generated once for an explicit intent, `A` a saved device UUID, `O` an
+operation UUID and `T` the exact shared recovery transaction UUID. Each mutation
+body includes `server_epoch:E, operation_key:K`. All generations, revisions and
+UTC millisecond expiries are **decimal JSON strings**, including `"0"`.
+
+| Operation | Route and additional body fields | Receipt / outcome |
 | --- | --- | --- |
-| Authenticated readiness | `GET /v1/ready` | `{server_epoch:E,api_version:"v1",build:"...",serving:true}`. This is not TV or Keychain readiness. |
-| State query | `GET /v1/state` | `{server_epoch:E,revision:12,selected:A,generation:7,connection:"ready",wake:"idle"}` plus safe saved summaries. No network effect. |
-| Inspect saved TV | `GET /v1/devices/A` | `{device_id:A,label:"Living room",config_revision:3,wake_active:"wired"}`; no pairing token, raw certificate or physical state claim. |
-| Discover | `POST /v1/discoveries {server_epoch:E,operation_key:K}` | Receipt `O`; terminal `{candidate_id:"candidate-1",expires_in_seconds:120}`. Candidate is not paired. |
-| Probe | `POST /v1/probes {server_epoch:E,operation_key:K,candidate_id:"candidate-1"}` or a validated local `host:"tv.local"` | Receipt `O`; terminal `{attempt_id:P,observation_id:"obs-1",fingerprint:"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",expires_in_seconds:300}`. |
-| First Pairing | `POST /v1/pairings {server_epoch:E,operation_key:K,attempt_id:P,observation_id:"obs-1",confirmed_fingerprint:"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",label:"Living room",selection_generation:7}` | Receipt `O` says awaiting TV approval. Terminal is `tv_approved_and_saved` with new ID/generation, `tv_denied`, `stale_selection`, or `blocked_partial_setup`. The full fingerprint must exactly match the observation. |
-| Re-pair | Same Pairing fields plus `replace_device_id:A`, `selection_generation:7` | Same ID A only after TV approval and durable commit; certificate/host mismatch or stale attempt cannot silently overwrite A. |
-| Select | `POST /v1/selection {server_epoch:E,operation_key:K,device_id:B,expected_generation:7}` | Durable success publishes selected B/generation 8. Failure returns `stale_selection` with current selection, no write. Same-ID A also advances generation and restarts session. |
-| Connect | `POST /v1/connections {server_epoch:E,operation_key:K,device_id:A,selection_generation:7}` | Receipt `O`; terminal `remote_ready`, `offline`, `pairing_required`, `certificate_changed`, or blocked. `remote_ready` is observed session readiness, not TV power state. |
-| Wake configuration | `PUT /v1/devices/A/wake {server_epoch:E,operation_key:K,expected_config_revision:3,selection_generation:7,wired:"02:11:22:33:44:55",wifi:null,active:"wired"}` | Durable config revision 4. Stale revision or invalid MAC is rejected without packet. |
-| Remote key | `POST /v1/remote-actions {server_epoch:E,operation_key:K,device_id:A,selection_generation:7,action:"VolumeUp"}` | Receipt `queued`; terminal `not_sent`, `written`, or `uncertain`. `written` is a socket fact only. |
-| Play/Pause | Same route with `action:"PlayPause"` | Server resolves `Play` or `Pause` at dispatch from its inference; uncertainty resets inference, never claims observed playback. |
-| Connected Power Toggle | Same route with `action:"PowerToggle"` | One queued power action; terminal is a remote-write fact, not observed power. |
-| Disconnected Power Toggle | Same route with `action:"PowerToggle"` and valid Wake setup | One operation probes first; only offline/timeout leads to one Wake packet. Result reports packet status and separate remote readiness; other probe errors never Wake. |
-| Wake | `POST /v1/wakes {server_epoch:E,operation_key:K,device_id:A,selection_generation:7}` | `{packet:"sent",remote:"not_ready"}` is possible; packet send does not prove power on. |
-| Cancel Wake | `POST /v1/wakes/O/cancel {server_epoch:E,operation_key:K}` | `{packet:"sent",remote:"readiness_unknown",cancelled_reconnect:true}` preserves an already sent packet. |
-| Forget | `POST /v1/devices/A/forget {server_epoch:E,operation_key:K,expected_config_revision:3,confirm_device_id:A}` | Complete only if token, trust and record removal all succeed. Partial example: `{outcome:"blocked_partial_setup",credential_removed:false,trust_removed:true,record_removed:true}`. |
-| Operation by ID/key | `GET /v1/operations/O` or `GET /v1/operations/by-key/K?epoch=E` | Same-client receipt/result without replay. A changed epoch yields `unknown_after_restart`; an unretained same-epoch key yields `outcome_unavailable` because expiry and never-admitted cannot be distinguished. Neither means not sent. |
-| Events | `GET /v1/events` | First event is an atomic snapshot at revision 12; later event revision 13 updates one fact. On lag, `resync_required` closes stream and client discards its projection. |
-| Stop server | `POST /v1/server/stop {server_epoch:E,operation_key:K}` by the authenticated GUI management identity | Sticky marker is durable before success; pending work becomes `not_sent` and possible writes become `uncertain`. The listener closes after drain. A lost response is checked from the owner-only marker and readiness. |
-| Resume server | Explicit signed-GUI launcher action while stopped; there is no HTTP listener then | Under the lifecycle lock, clears the sticky marker and starts/attaches. It never repeats a TV action. The MCP helper cannot resume. |
+| First use | `GET /v1/state` | Empty devices, null selected ID, generation `"0"`; no legacy reads, discovery or credential access. Setup requires explicit intent. |
+| Inspect | `GET /v1/devices/A` | Saved host/label, `config_revision`, Wake settings; no token or physical power claim. |
+| Discover | `POST /v1/discoveries` | Pending receipt, then private `result.kind:discovered` with at most 32 expiring candidate IDs and hosts. |
+| Probe | `POST /v1/probes {host:"synthetic-tv.invalid",candidate_id?:C}` | `probed`: equal attempt/observation IDs, full fingerprint, host, bounded name/model and stable display expiry. |
+| Pair | `POST /v1/pairings {attempt_id:O,observation_id:O,host:"synthetic-tv.invalid",fingerprint:F,confirm_fingerprint:F,label:"Synthetic TV",selection_generation:"0"}` | TV approval and durable storage yield `tv_approved_and_saved`; acceptance alone promises neither. |
+| Re-pair | Same route plus `device_id:A`, current generation | Same saved ID only after fresh observation, exact fingerprint and TV approval. Interrupted re-pair also requires `recovery_transaction_id:T`. |
+| Select | `POST /v1/selection {device_id:A,expected_generation:"7"}` | `saved`; durable selection increments generation. A stale new intent has a retained terminal rejection. |
+| Connect | `POST /v1/connections {device_id:A,selection_generation:"7"}` | `remote_ready` means observed session readiness; no power claim. |
+| Wake configuration | `PUT /v1/devices/A/wake {device_id:A,selection_generation:"7",expected_config_revision:"3",wired_mac:"02:00:00:00:00:01",wifi_mac:null,active_interface:"Wired"}` | `saved` with stable terminal selection/configuration facts; no packet. |
+| Remote action | `POST /v1/remote-actions {device_id:A,selection_generation:"7",action:"VolumeUp"}` | `written`, `not_sent` or `uncertain`. PlayPause resolves at dispatch. PowerToggle probes before Wake if disconnected. |
+| Wake | `POST /v1/wakes {device_id:A,selection_generation:"7"}` | `wake` contains separate packet and remote-readiness facts. Finding a reachable TV uses `connected`/`packet:not_sent`; `ready` follows a sent packet. |
+| Cancel Wake | `POST /v1/wakes/O/cancel {device_id:A,selection_generation:"7"}` | Cancels this named operation only; preserves any already-sent or uncertain packet fact. |
+| Forget | `POST /v1/devices/A/forget {device_id:A,expected_config_revision:"3",confirm_device_id:A}` | `forgotten` only when all removals complete; otherwise `partial_setup` plus per-store facts and recovery marker. |
+| Recover first Pair | `POST /v1/devices/A/recover-pairing {device_id:A,transaction_id:T,confirm_device_id:A}` | Compensates only the exact reserved ID/transaction. Re-pair uses fresh approved Pairing instead. |
+| Recover Forget | `POST /v1/devices/A/recover-forget {device_id:A,transaction_id:T,confirm_device_id:A}` | Completes only this marker's remaining removals, including when the saved record is gone. |
+| Lookup | `GET /v1/operations/O?epoch=E` or `GET /v1/operations/by-key/K?epoch=E` | Same identity only. Old epoch: `unknown_after_restart`; unretained current key: `outcome_unavailable`. Neither establishes that no effect happened. |
+| Events | `GET /v1/events` | Atomic snapshot, then every consecutive shared revision. Private operation input/results are absent. Overflow requires fresh authentication/snapshot, with no mutation replay. |
+| Stop | `POST /v1/server/stop` with only common envelope, GUI management identity | `durable_stop:true` follows synced marker persistence; admission is fenced first. Lost reply never cancels Stop. |
+| Resume / restart | Explicit GUI launcher action; no stopped HTTP listener | Resume waits for ownership/settlement and clears Stop. Incompatible live builds require explicit restart. MCP cannot manage either action. |
 
-Example remote response sequence with valid synthetic UUIDs:
+Canonical remote request:
 
 ```json
-{"operation_id":"f4444444-4444-4444-8444-444444444444","server_epoch":"e1111111-1111-4111-8111-111111111111","device_id":"d3333333-3333-4333-8333-333333333333","selection_generation":7,"state":"queued"}
+{"server_epoch":"e1111111-1111-4111-8111-111111111111","operation_key":"a2222222-2222-4222-8222-222222222222","device_id":"d3333333-3333-4333-8333-333333333333","selection_generation":"7","action":"VolumeUp"}
 ```
+
+A pending receipt has no expiry or terminal result:
 
 ```json
-{"operation_id":"f4444444-4444-4444-8444-444444444444","device_id":"d3333333-3333-4333-8333-333333333333","outcome":"uncertain","meaning":"The TV may have received this action; do not retry automatically."}
+{"operation_id":"53545201-0100-0000-0000-000000000001","server_epoch":"e1111111-1111-4111-8111-111111111111","device_id":"d3333333-3333-4333-8333-333333333333","selection_generation":"7","state":"pending","result":null}
 ```
 
-An HTTP timeout after either body leads to operation lookup by K under the
-same authenticated client identity. The GUI generates K from one user intent
-and retains it through timeout/reconnect. MCP tools likewise require the
-caller to supply K; server adapters cannot create a fresh K on retry.
+A terminal result retains its metadata and stable expiry. For example,
+`result:{"kind":"uncertain"}` is a socket uncertainty fact. The client keeps K
+for GET lookup; it never creates a new key or resubmits the mutation after a
+lost HTTP reply, reconnect, epoch change or expired retention. An explicit new
+user intent is required before repeating a possible effect.
 
-## M7 application handoff
+`tests/control_wire.rs` checks every mutation shape against the real parser and
+native encoder. `tests/control_response.rs` covers all typed outcome/error
+projections; `tests/control_http.rs` exercises actual authenticated routing,
+private lookup, shared events, duplicate/lost replies and guarded recovery.
 
-These remain transport examples. M7 implements the matching typed service,
-including expiring client-bound candidates/observations and atomic snapshots.
-Wire IDs remain opaque; the transport must map the epoch-scoped Rust IDs to
-its declared DTO representation. It must never derive authority from a host
-or a fingerprint alone.
+Canonical GUI Stop body (management identity is authenticated, never supplied
+in JSON):
 
-Wake configuration additionally names the observed selected-TV generation.
-For an interrupted setup, inspect the safe recovery marker before any new
-mutation. A partial Forget retries via an exact device/transaction/confirmation
-command even if the device record is gone. First-Pairing recovery compensates
-only its reserved ID with the same guards. Re-pair/rotation recovery adds the
-exact recovery transaction to a fresh observation/fingerprint confirmation
-and obtains new TV approval; a normal Pair request cannot clear the marker.
-M8 must expose these typed recovery guards before publishing its routes.
-See the [M7 review](milestone-07-review.md) for limits and evidence.
-
-Cancel Wake carries the exact operation ID as well as the selected target and
-generation through to the application owner. A stale cancellation cannot
-cancel a later Wake for the same selected generation. The MCP Forget schema
-requires either `expected_config_revision` for ordinary deletion or
-`recovery_transaction` for guarded recovery, with the exact device confirmation
-in both forms.
+```json
+{"server_epoch":"e1111111-1111-4111-8111-111111111111","operation_key":"a2222222-2222-4222-8222-222222222222"}
+```

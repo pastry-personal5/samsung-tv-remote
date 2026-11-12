@@ -55,12 +55,34 @@ pub enum Message {
     ForgetSelected,
     SelectSaved(DeviceId),
     RuntimeStarted(Arc<super::in_process::InProcess>),
+    RemoteStarted(
+        Result<Arc<crate::control_client::background::Remote>, crate::server::launch::LaunchError>,
+    ),
+    RemoteUpdate(crate::control_client::background::Update),
+    RemoteAdmitted(
+        u64,
+        Result<
+            crate::control_client::projection::NativeReceipt,
+            crate::control_client::background::SubmitError,
+        >,
+    ),
+    RemoteResult(
+        Result<
+            crate::control_client::projection::NativeReceipt,
+            crate::control_client::http::ClientError,
+        >,
+    ),
     ServiceSnapshot(Snapshot),
     ServiceResnapshot(Snapshot),
     ServiceResult(Receipt),
     Admitted(u64, Result<Receipt, ServiceError>),
     ServiceUnavailable,
     Drained,
+    ResumeServer,
+    RestartServer,
+    RemoteManagementFinished(Result<(), crate::server::launch::LaunchError>),
+    CaptureProbe,
+    ProbeCaptured(window::Screenshot),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

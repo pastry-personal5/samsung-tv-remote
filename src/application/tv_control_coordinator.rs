@@ -77,6 +77,7 @@ pub enum WakeStage {
     CheckingConnection,
     PacketSending,
     Reconnecting,
+    /// Disconnected Power found a ready connection before sending any packet.
     Connected,
     Ready,
     Failed(WakeFailure),

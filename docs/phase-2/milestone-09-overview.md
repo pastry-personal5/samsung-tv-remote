@@ -5,63 +5,114 @@ Status: Planned
 ## Goal
 
 Make the Iced GUI a complete client of the running Control API Server while
-preserving the existing Power, Remote, Settings, and message behavior.
+preserving Phase 1's Power, Remote, Settings, shortcuts and honest outcome
+wording. Ship the first locally signed same-executable GUI/`--server` bundle
+with on-demand startup and a fresh server-owned profile.
+
+## Entry and owner decisions
+
+M8's [completion review](milestone-08-review.md) provides the accepted isolated
+HTTP/SSE, wire/access/lifecycle and reusable native-client handoff, including
+process and early-GUI-probe evidence. M9 extends that boundary to full shipping
+GUI parity; M8 does not establish production signed identity or Keychain access.
+M6's signed peer/credential gates must have evidence before production cutover;
+M9 supplies that evidence rather than assuming fake tests prove it.
+
+The owner decisions recorded on 2026-11-12 apply:
+
+- Use the same signed executable, dispatching `--server` before Iced. Start
+  on demand, survive GUI exit, never register login launch, and honor sticky
+  Stop until explicit GUI Resume.
+- Start with an empty server profile in distinct data and credential
+  namespaces. Import no legacy devices, selection, trust, recovery markers or
+  credentials. Existing legacy data stays untouched; no device-key migration
+  or synthetic migration experiment is required.
+- Reuse M8's automatic background attachment policy: immediate first attempt,
+  1-second exponential delays capped at a repeated one-hour interval, reset
+  after 30 healthy seconds, one attempt/timer and no mutation replay.
+- Require explicit restart for an authenticated incompatible server build.
+  Opening the GUI cannot replace it or undo Stop.
 
 ## Scope
 
-- Add a typed local API client and move GUI startup, restore, reconnect,
-  discovery, probe, Pairing, selection, Wake configuration, control, and
-  forget to it.
-- Project server snapshots and operation outcomes into the view model;
-  resubscribe and resnapshot after a gap or server restart.
-- Keep Iced views and messages for interaction, but make `App::update` a thin
-  GUI coordinator over local state and a typed `ControlClient`; it must not
-  own a TV control runtime or infer a server operation's terminal outcome.
-- Show server unavailable, starting, and reconnecting states without claiming
-  that an interrupted command failed or succeeded.
-- Add the first signed bundle with the M6-selected server process shape and
-  on-demand server start path so
-  the real-profile cutover can be reviewed in this milestone. An intentional
-  Stop is visible and is not undone by GUI reconnect.
+- Extend M8's typed local client to every GUI workflow, operation lookup and
+  recovery. Move Iced off `InProcess`, `ControlService` and `AppServices`.
+- Separate wire DTOs, presentation projection, pending request tracking and
+  local window/draft state; keep `App::update` a thin coordinator.
+- Preserve setup confirmations, target/generation/configuration preconditions,
+  keyboard/pointer parity, message history and Wake progress/cancellation.
+- Add visible server lifecycle and credential states, Resume, explicit restart
+  and intentional Stop. GUI close only detaches.
+- Compose production adapters exclusively in server mode; complete signed
+  bootstrap, fresh Keychain lifecycle and Local Network verification.
+- Cut over the shipping executable atomically, remove the temporary adapter,
+  enforce the GUI dependency boundary and update tested bundle instructions.
+
+No Sources, Apps, Text Input or new TV-state claim is added. MCP belongs to
+M10; full session/upgrade/uninstall integration and accessibility/hardware
+matrix hardening remain M11. M9 still requires its own signed first-use,
+credential update/restart and GUI parity evidence.
 
 ## Completion checklist
 
-- [ ] Every Phase 1 GUI operation reaches the server through the control API
-  and preserves its present safety gates and user-facing outcome wording.
-- [ ] View-model projection tests cover snapshots, receipts, terminal
-  outcomes, stale selection, revision gaps, changed epoch, and unknown
-  outcomes. Fake-client GUI tests verify that UI messages form requests with
-  the observed target/preconditions and never send a fresh-key retry after a
-  lost response.
-- [ ] Selection changes from another client update the GUI and invalidate its
-  old pending commands; GUI navigation remains local to the GUI.
-- [ ] API outage, server restart, and resumed event stream recover without a
-  client-side automatic retry or a permanent progress indicator. An unknown
-  outcome is shown honestly when the server epoch changes.
-- [ ] Tests use a fake API server. A signed bundle built from committed
-  configuration includes the chosen signed GUI/server process packaging and
-  is reviewed for first launch,
-  GUI close/reopen, Pairing, Wake, legacy-item Keychain access, and Local
-  Network permission. Routine token access causes no Keychain prompt. Denied,
-  locked, or interaction-required access is visible, not mistaken for missing
-  TV data; repeated reconnects do not create an unattended prompt loop.
-  Update the contribution guide's bundle and launch
-  instructions for this cutover.
-- [ ] Opening the GUI needs no manual server command, port selection, or
-  token copy. GUI and server credentials bootstrap through the chosen
-  protected path; the current GUI launch reconnect is an observable API
-  operation after attachment. Stop, crash, and disabled Local Network states
-  are distinct.
-- [ ] GUI code neither constructs nor imports TV or storage adapters; the
-  boundary check is required before the release cutover.
-- [ ] The release cutover is atomic: no shipped configuration can run a
-  partially migrated GUI beside the server against the same TV profile. The
-  prior GUI process is stopped before the server first opens real saved data.
+- [ ] M8 handoff is accepted with concrete wire/client/lifecycle references;
+  M6 signed gates have evidence or an explicit remaining release blocker.
+- [ ] Every Phase 1 GUI operation uses the API, including initial explicit
+  TV Connect after restore, discovery/manual probe, Pairing/re-pair, selection,
+  Wake configuration, remote actions, Wake/cancel, Forget and setup recovery.
+  Server attachment alone never claims TV readiness.
+- [ ] Projection and fake-client intent tests cover snapshot/event ordering,
+  receipts racing events, stale selection/configuration, revision gaps,
+  changed epochs, private retained lookup, unknown outcomes and late responses.
+  No lost response generates a fresh-key retry or false not-admitted result.
+- [ ] External selection changes invalidate stale GUI intents and setup
+  confirmations without retargeting them; navigation stays local. Dirty Wake
+  drafts cannot save against a different target or unseen configuration.
+- [ ] Outage/restart/resubscribe restores an atomic snapshot without replaying
+  mutations or leaving permanent progress. Backoff fake-clock tests cover the
+  repeated cap, healthy reset, sleep, exit, single attempt/timer, rotation and
+  blocked states. Status and next retry remain visible while the GUI responds.
+- [ ] Stop, starting, reconnecting, incompatible build, blocked credentials,
+  unsafe endpoint and disabled Local Network states are distinct. Explicit
+  Resume/restart use M8's management path; closing all GUI windows sends no Stop
+  or runtime drain. Opening needs no manual command, port choice or token copy.
+- [ ] Signed bootstrap authenticates the selected peer code identity before
+  disclosing credentials; fake/wrong peers and replay fail. Same-executable
+  identity limits are documented. No bearer is placed in files, logs, command
+  arguments or environment.
+- [ ] A signed bundle built from committed configuration passes empty first
+  launch with populated legacy fixtures, first Pairing, new-profile restore,
+  GUI close/reopen, Wake and Local Network review. Fresh TV/API credentials
+  pass save/read/update/delete, server restart and signed rebuild/update.
+  Routine access produces zero Keychain prompts; denied, locked and
+  interaction-required states stay visible without unattended prompt loops.
+- [ ] Every migrated flow has deterministic API/fake-client evidence, and
+  two-client/subprocess tests prove cross-process selection and outcome
+  recovery. Native GUI review records screenshots and sanitized results;
+  automated tests require no TV or local network.
+- [ ] The shipping GUI imports no runtime, coordinator, TV or persistence
+  adapters; `in_process` is removed and a required boundary check covers GUI
+  modules and composition. Production adapters are constructed only in server
+  mode. Development fakes cannot open the production namespace.
+- [ ] The previous single-process GUI is stopped before the new server first
+  opens its production namespace. One release switches all flows together;
+  there is no shipped mixed-mode fallback. Failed gates block cutover.
+- [ ] Required Cargo checks pass. Update current architecture/UX and tested
+  contribution-guide launch commands at cutover; write an M9 completion review
+  mapping every item to evidence and recording M11 handoff and limitations.
+
+## Delivery order
+
+Follow the [architecture sequence](milestone-09-architecture.md#implementation-sequence):
+freeze the M8 handoff; build projection/request tracking; migrate control and
+setup flows in isolated builds; finish lifecycle UI; verify signed composition;
+then cut over and review. M9 stays Planned until implementation starts; this
+record claims no Cargo, signed-platform or TV result.
 
 ## References
 
-- [M6 acceptance and test ownership](milestone-06-acceptance.md)
-
 - [Architecture](milestone-09-architecture.md)
+- [M8 handoff](milestone-08-architecture.md)
+- [M6 acceptance and test ownership](milestone-06-acceptance.md)
 - [Target architecture](target-architecture.md)
 - [Lifecycle and security research](server-lifecycle-security.md)

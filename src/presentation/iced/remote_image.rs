@@ -35,7 +35,7 @@ impl RemoteImage {
     }
 
     fn enabled(&self, action: RemoteAction) -> bool {
-        if self.controls.selected_device.is_none() {
+        if !self.controls.service_available || self.controls.selected_device.is_none() {
             return false;
         }
         if action == RemoteAction::PowerToggle {

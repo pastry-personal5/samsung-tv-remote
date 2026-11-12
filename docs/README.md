@@ -14,6 +14,12 @@ Current references:
   architecture, API, MCP, migration and signed-prototype evidence.
 - [P2-M7 completion review](phase-2/milestone-07-review.md) — implemented
   headless service, temporary GUI adapter, recovery and resource evidence.
+- [P2-M8 completion review](phase-2/milestone-08-review.md) — authenticated
+  HTTP/SSE, protected bootstrap, isolated detached lifecycle, native GUI probe
+  and measured verification evidence.
+  [Plan review](phase-2/milestone-08-plan-review.md) records findings and owner answers.
+- [P2-M9 implementation plan](phase-2/milestone-09-overview.md) — complete GUI
+  API migration, outcome recovery, signed fresh-profile cutover and verification.
 - [P2-M6 human test runbook](phase-2/milestone-06-human-runbook.md) — commands
   for the isolated macOS account and remaining platform checks.
 - [Control API Server internals](phase-2/control-server-internals.md) — planned

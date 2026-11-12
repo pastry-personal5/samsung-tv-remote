@@ -121,6 +121,23 @@ impl Runtime {
         }
     }
 
+    /// Serialize the lifecycle fence with owner admission. Existing work and
+    /// duplicate receipts remain observable while Stop metadata is persisted.
+    pub async fn fence_admission(
+        &self,
+        epoch: Epoch,
+        authorization: AdmissionAuthorization,
+    ) -> Result<(), ServiceError> {
+        let (reply, response) = oneshot::channel();
+        self.sender
+            .try_send(Message::Fence(epoch, authorization, reply))
+            .map_err(|e| match e {
+                mpsc::error::TrySendError::Full(_) => ServiceError::Busy,
+                mpsc::error::TrySendError::Closed(_) => ServiceError::Closed,
+            })?;
+        response.await.map_err(|_| ServiceError::Closed)?
+    }
+
     /// Close admission immediately and report after at most the drain deadline.
     /// Unresolved workers remain supervised until their actual completion.
     pub async fn drain(mut self) -> DrainHandle {
@@ -236,6 +253,7 @@ impl Owner {
         let mut coordinator = TvControlCoordinator::new(services);
         coordinator.dispatcher = super::remote_dispatcher::RemoteDispatcher::new(32, 33);
         let snapshot = Snapshot {
+            admission_closed: false,
             epoch,
             revision: 0,
             startup: StartupState::Restoring,
@@ -377,6 +395,7 @@ impl Owner {
     }
 
     fn begin_drain(&mut self) {
+        self.snapshot.admission_closed = true;
         self.snapshot.startup = StartupState::Draining;
         self.cancel_wakes();
         self.coordinator.stop_active();
@@ -387,7 +406,11 @@ impl Owner {
         if let Some((id, _)) = self.storage {
             self.finish(id, Outcome::StorageUncertain);
         }
-        self.operations.drain();
+        for id in self.operations.pending_ids() {
+            // Drain must capture the same stable terminal facts and emit the
+            // same ordered coarse event as every other completion path.
+            self.finish(id, Outcome::Drained);
+        }
         self.publish(None);
     }
 
@@ -404,8 +427,28 @@ impl Owner {
     fn message(&mut self, message: Message) {
         self.operations.expire();
         match message {
+            Message::Fence(epoch, authorization, reply) => {
+                let result = if epoch != self.snapshot.epoch {
+                    Err(ServiceError::StaleEpoch)
+                } else {
+                    authorization
+                        .at_admission(|| {
+                            self.snapshot.admission_closed = true;
+                            self.publish(None);
+                            Ok(())
+                        })
+                        .unwrap_or(Err(ServiceError::Unauthorized))
+                };
+                let _ = reply.send(result);
+            }
             Message::Snapshot(reply) => {
                 let _ = reply.send(self.snapshot.clone());
+            }
+            Message::ClientSnapshot(client, reply) => {
+                let _ = reply.send(ClientSnapshot {
+                    snapshot: self.snapshot.clone(),
+                    recent_operations: self.operations.recent(client),
+                });
             }
             Message::Lookup(client, epoch, key, reply) => {
                 let result = if epoch != self.snapshot.epoch {
@@ -444,6 +487,7 @@ impl Owner {
                     let (sender, events) = mpsc::channel(self.limits.subscriber_backlog);
                     let subscription = Subscription {
                         snapshot: self.snapshot.clone(),
+                        recent_operations: self.operations.recent(client),
                         events,
                     };
                     if reply.send(Ok(subscription)).is_ok() {
@@ -453,6 +497,12 @@ impl Owner {
             }
             Message::Submit(client, request, reply) => {
                 let result = self.submit(client, request);
+                let _ = reply.send(result);
+            }
+            Message::AuthorizedSubmit(client, request, authorization, reply) => {
+                let result = authorization
+                    .at_admission(|| self.submit(client, request))
+                    .unwrap_or(Err(ServiceError::Unauthorized));
                 let _ = reply.send(result);
             }
         }
@@ -468,7 +518,7 @@ impl Owner {
         if matches!(&request.command, Command::Pair { label, .. } if label.len() > 256) {
             return Err(ServiceError::InvalidPayload);
         }
-        if self.snapshot.startup == StartupState::Draining {
+        if self.snapshot.admission_closed {
             return self
                 .operations
                 .duplicate(client, &request.key, &request.command)?
@@ -1038,6 +1088,7 @@ impl Owner {
                                     let candidate = Candidate {
                                         id: CandidateId(id, index as u8),
                                         host,
+                                        expires_at: display_deadline(Duration::from_secs(120)),
                                     };
                                     self.candidates.insert(
                                         candidate.id,
@@ -1074,6 +1125,7 @@ impl Owner {
                             id,
                             host,
                             observation,
+                            expires_at: display_deadline(Duration::from_secs(300)),
                         };
                         self.observations.insert(
                             id,
@@ -1083,7 +1135,7 @@ impl Owner {
                                 expires: Instant::now() + Duration::from_secs(300),
                             },
                         );
-                        Outcome::Probed(observed)
+                        Outcome::Probed(Box::new(observed))
                     }
                     Ok(_) => Outcome::Rejected(Rejection::Oversize),
                     Err(error) => Outcome::ProbeFailed(error),
@@ -1116,7 +1168,22 @@ impl Owner {
     }
 
     fn finish(&mut self, id: OperationId, outcome: Outcome) {
-        if self.operations.finish(id, outcome) {
+        let target = match &outcome {
+            Outcome::Saved(device) | Outcome::Paired(device) => Some(device.id),
+            _ => self.operations.target(id),
+        };
+        let state = TerminalState {
+            selected: self.coordinator.app_state.selected_device(),
+            generation: self.coordinator.app_state.selection_generation(),
+            configuration_revision: target.and_then(|target| {
+                self.snapshot
+                    .configuration_revisions
+                    .iter()
+                    .find(|(id, _)| *id == target)
+                    .map(|(_, revision)| *revision)
+            }),
+        };
+        if self.operations.finish(id, outcome, Some(state)) {
             self.publish(Some(id));
         }
     }
@@ -1189,6 +1256,43 @@ fn profile_fits(devices: &[SavedDevice], capacity: usize) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn queued_authorization_is_rechecked_at_owner_admission() {
+        let runtime = Runtime::start(AppServices::without_adapters(), RuntimeLimits::default());
+        let client = runtime.client(ClientId(1));
+        let snapshot = client.snapshot().await.unwrap();
+        let authorization = AdmissionAuthorization::default();
+        let (reply, response) = oneshot::channel();
+        // Current-thread executor cannot poll the owner between this enqueue
+        // and revocation, so the request is demonstrably queued beforehand.
+        client
+            .sender
+            .try_send(Message::AuthorizedSubmit(
+                ClientId(1),
+                Request {
+                    epoch: snapshot.epoch,
+                    key: "queued-before-revoke".into(),
+                    command: Command::Discover,
+                },
+                authorization.clone(),
+                reply,
+            ))
+            .unwrap();
+        authorization.revoke();
+        assert!(matches!(
+            response.await.unwrap(),
+            Err(ServiceError::Unauthorized)
+        ));
+        assert!(matches!(
+            client
+                .lookup(snapshot.epoch, "queued-before-revoke".into())
+                .await
+                .unwrap(),
+            Lookup::OutcomeUnavailable
+        ));
+        runtime.drain().await.settled().await.unwrap();
+    }
 
     #[tokio::test]
     async fn dropped_reply_does_not_remove_admission() {

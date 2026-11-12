@@ -5,42 +5,402 @@
     "operation_key": "UUID generated once for this user intent"
   },
   "tools": [
-    {"name":"list_tvs","description":"List saved TVs, selected TV, epoch and generation; no TV network access.","fields":[]},
-    {"name":"inspect_tv","description":"Inspect saved TV configuration and connection facts; no physical state claim.","fields":["device_id"]},
-    {"name":"discover_tvs","description":"Discover local Samsung TVs; returns expiring candidate IDs.","fields":["server_epoch","operation_key"]},
-    {"name":"probe_tv","description":"Probe exactly one candidate ID or validated local host to observe the full certificate fingerprint before pairing.","fields":["server_epoch","operation_key","candidate_id?","host?"]},
-    {"name":"pair_tv","description":"Pair or re-pair only after confirming one fresh observation and exact full fingerprint; TV approval is still required.","fields":["server_epoch","operation_key","attempt_id","observation_id","confirmed_fingerprint","label","selection_generation","replace_device_id?","recovery_transaction?"]},
-    {"name":"select_tv","description":"Select a saved TV for every client; requires the generation you observed.","fields":["server_epoch","operation_key","device_id","expected_generation"]},
-    {"name":"connect_tv","description":"Connect to the selected saved TV; reports remote readiness, not power.","fields":["server_epoch","operation_key","device_id","selection_generation"]},
-    {"name":"set_wake","description":"Set wired or Wi-Fi Wake MAC and active interface for a saved TV; checks its config revision.","fields":["server_epoch","operation_key","device_id","selection_generation","expected_config_revision","wired?","wifi?","active?"]},
-    {"name":"remote_action","description":"Send one semantic remote action to the selected TV; written means socket write only; PowerToggle may probe then Wake.","fields":["server_epoch","operation_key","device_id","selection_generation","action:PowerToggle|Up|Down|Left|Right|Enter|Back|Home|PlayPause|Play|Pause|Mute|VolumeUp|VolumeDown"]},
-    {"name":"wake_tv","description":"Send at most one Wake packet to the selected TV, then observe remote readiness separately.","fields":["server_epoch","operation_key","device_id","selection_generation"]},
-    {"name":"cancel_wake","description":"Stop a named Wake operation's reconnect wait; a packet already sent cannot be recalled.","fields":["server_epoch","operation_key","operation_id"]},
-    {"name":"get_operation","description":"Look up a lost receipt or terminal result by exactly one operation ID or key; optional wait up to 10 seconds never repeats the effect.","fields":["server_epoch","operation_id?","operation_key?","wait_seconds?"]},
-    {"name":"forget_tv","description":"Forget a saved TV and its credentials only with exact device ID confirmation; partial cleanup stays blocked.","fields":["server_epoch","operation_key","device_id","expected_config_revision?","confirm_device_id","recovery_transaction?"]}
+    {
+      "name": "list_tvs",
+      "description": "List saved TVs, selected TV, epoch and generation; no TV network access.",
+      "fields": []
+    },
+    {
+      "name": "inspect_tv",
+      "description": "Inspect saved TV configuration and connection facts; no physical state claim.",
+      "fields": [
+        "device_id"
+      ]
+    },
+    {
+      "name": "discover_tvs",
+      "description": "Discover local Samsung TVs; returns expiring candidate IDs.",
+      "fields": [
+        "server_epoch",
+        "operation_key"
+      ]
+    },
+    {
+      "name": "probe_tv",
+      "description": "Probe one validated local host, optionally bound to its private candidate handle, and observe the full fingerprint before pairing.",
+      "fields": [
+        "server_epoch",
+        "operation_key",
+        "host",
+        "candidate_id?"
+      ]
+    },
+    {
+      "name": "pair_tv",
+      "description": "Pair or re-pair only after confirming one fresh observation and exact full fingerprint; TV approval is still required.",
+      "fields": [
+        "server_epoch",
+        "operation_key",
+        "host",
+        "attempt_id",
+        "observation_id",
+        "fingerprint",
+        "confirm_fingerprint",
+        "label",
+        "selection_generation",
+        "device_id?",
+        "recovery_transaction_id?"
+      ]
+    },
+    {
+      "name": "select_tv",
+      "description": "Select a saved TV for every client; requires the generation you observed.",
+      "fields": [
+        "server_epoch",
+        "operation_key",
+        "device_id",
+        "expected_generation"
+      ]
+    },
+    {
+      "name": "connect_tv",
+      "description": "Connect to the selected saved TV; reports remote readiness, not power.",
+      "fields": [
+        "server_epoch",
+        "operation_key",
+        "device_id",
+        "selection_generation"
+      ]
+    },
+    {
+      "name": "set_wake",
+      "description": "Set wired or Wi-Fi Wake MAC and active interface for a saved TV; checks its config revision.",
+      "fields": [
+        "server_epoch",
+        "operation_key",
+        "device_id",
+        "selection_generation",
+        "expected_config_revision",
+        "wired_mac?",
+        "wifi_mac?",
+        "active_interface?"
+      ]
+    },
+    {
+      "name": "remote_action",
+      "description": "Send one semantic remote action to the selected TV; written means socket write only; PowerToggle may probe then Wake.",
+      "fields": [
+        "server_epoch",
+        "operation_key",
+        "device_id",
+        "selection_generation",
+        "action:PowerToggle|Up|Down|Left|Right|Enter|Back|Home|PlayPause|Play|Pause|Mute|VolumeUp|VolumeDown"
+      ]
+    },
+    {
+      "name": "wake_tv",
+      "description": "Send at most one Wake packet to the selected TV, then observe remote readiness separately.",
+      "fields": [
+        "server_epoch",
+        "operation_key",
+        "device_id",
+        "selection_generation"
+      ]
+    },
+    {
+      "name": "cancel_wake",
+      "description": "Stop a named Wake operation's reconnect wait; a packet already sent cannot be recalled.",
+      "fields": [
+        "server_epoch",
+        "operation_key",
+        "operation_id",
+        "device_id",
+        "selection_generation"
+      ]
+    },
+    {
+      "name": "get_operation",
+      "description": "Look up a lost receipt or terminal result by exactly one operation ID or key; optional wait up to 10 seconds never repeats the effect.",
+      "fields": [
+        "server_epoch",
+        "operation_id?",
+        "operation_key?",
+        "wait_seconds?"
+      ]
+    },
+    {
+      "name": "forget_tv",
+      "description": "Forget a saved TV and its credentials only with exact device ID confirmation; partial cleanup stays blocked.",
+      "fields": [
+        "server_epoch",
+        "operation_key",
+        "device_id",
+        "expected_config_revision",
+        "confirm_device_id"
+      ]
+    },
+    {
+      "name": "recover_pairing",
+      "description": "Explicitly compensate interrupted pairing using the exact shared marker; never repeat setup automatically.",
+      "fields": [
+        "server_epoch",
+        "operation_key",
+        "device_id",
+        "transaction_id",
+        "confirm_device_id"
+      ]
+    },
+    {
+      "name": "recover_forget",
+      "description": "Explicitly compensate interrupted forget using the exact shared marker; never repeat setup automatically.",
+      "fields": [
+        "server_epoch",
+        "operation_key",
+        "device_id",
+        "transaction_id",
+        "confirm_device_id"
+      ]
+    }
   ],
   "results": {
-    "list": {"server_epoch":"e1111111-1111-4111-8111-111111111111","selected":"d3333333-3333-4333-8333-333333333333","generation":7,"tvs":[{"id":"d3333333-3333-4333-8333-333333333333","label":"Living room","connection":"ready"}]},
-    "inspect": {"device_id":"d3333333-3333-4333-8333-333333333333","label":"Living room","config_revision":3,"wake_active":"wired","connection":"ready","physical_state":"unobserved"},
-    "discovery": {"operation_id":"a8888888-8888-4888-8888-888888888888","candidates":[{"candidate_id":"candidate-1","expires_in_seconds":120}],"next":"probe_tv"},
-    "probe": {"attempt_id":"b6666666-6666-4666-8666-666666666666","observation_id":"c7777777-7777-4777-8777-777777777777","target":"candidate-1","fingerprint":"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef","expires_in_seconds":300,"next":"Confirm the full fingerprint and TV before pair_tv."},
-    "receipt": {"operation_id":"f4444444-4444-4444-8444-444444444444","target":"d3333333-3333-4333-8333-333333333333","epoch":"e1111111-1111-4111-8111-111111111111","generation":7,"state":"queued","next":"get_operation"},
-    "pair_receipt": {"operation_id":"f4444444-4444-4444-8444-444444444444","target":"candidate-1","state":"awaiting_tv_approval","next":"Approve on the TV, then get_operation."},
-    "pair_complete": {"operation_id":"f4444444-4444-4444-8444-444444444444","target":"d3333333-3333-4333-8333-333333333333","outcome":"tv_approved_and_saved","selection_generation":8,"next":"Connect before remote actions."},
-    "forget_receipt": {"operation_id":"c7777777-7777-4777-8777-777777777777","target":"d3333333-3333-4333-8333-333333333333","state":"running","next":"get_operation"},
-    "written": {"operation_id":"f4444444-4444-4444-8444-444444444444","target":"d3333333-3333-4333-8333-333333333333","outcome":"written","meaning":"Socket write only; TV state unobserved."},
-    "stale": {"code":"stale_selection","target":"d3333333-3333-4333-8333-333333333333","current_selected":"a5555555-5555-4555-8555-555555555555","current_generation":8,"next":"Read current selection; do not retry automatically."},
-    "uncertain": {"operation_id":"f4444444-4444-4444-8444-444444444444","target":"d3333333-3333-4333-8333-333333333333","outcome":"uncertain","next":"The TV may have received it. Ask before another action."},
-    "forget": {"operation_id":"c7777777-7777-4777-8777-777777777777","target":"d3333333-3333-4333-8333-333333333333","outcome":"blocked_partial_setup","credential_removed":false,"trust_removed":true,"record_removed":true,"next":"Resolve Keychain access; do not claim complete removal."},
-    "wake": {"operation_id":"a8888888-8888-4888-8888-888888888888","target":"d3333333-3333-4333-8333-333333333333","packet":"sent","remote":"not_ready","next":"Packet send does not prove power on."}
+    "list": {
+      "server_epoch": "e1111111-1111-4111-8111-111111111111",
+      "selected": "d3333333-3333-4333-8333-333333333333",
+      "selection_generation": "7",
+      "tvs": [
+        {
+          "label": "Living room",
+          "connection": "ready",
+          "device_id": "d3333333-3333-4333-8333-333333333333"
+        }
+      ]
+    },
+    "inspect": {
+      "device_id": "d3333333-3333-4333-8333-333333333333",
+      "label": "Living room",
+      "config_revision": "3",
+      "wake_active": "wired",
+      "connection": "ready",
+      "physical_state": "unobserved",
+      "server_epoch": "e1111111-1111-4111-8111-111111111111"
+    },
+    "discovery": {
+      "operation_id": "53545201-0100-0000-0000-000000000001",
+      "candidates": [
+        {
+          "candidate_id": "53545201-0200-0000-0000-000000000001",
+          "expires_at_unix_ms": "1794448800000"
+        }
+      ],
+      "next": "probe_tv",
+      "server_epoch": "e1111111-1111-4111-8111-111111111111"
+    },
+    "probe": {
+      "attempt_id": "53545201-0100-0000-0000-000000000002",
+      "observation_id": "53545201-0100-0000-0000-000000000002",
+      "fingerprint": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+      "expires_at_unix_ms": "1794448800000",
+      "next": "Confirm the full fingerprint and TV before pair_tv.",
+      "host": "synthetic-tv.invalid",
+      "server_epoch": "e1111111-1111-4111-8111-111111111111",
+      "candidate_id": "53545201-0200-0000-0000-000000000001"
+    },
+    "receipt": {
+      "operation_id": "53545201-0100-0000-0000-000000000003",
+      "server_epoch": "e1111111-1111-4111-8111-111111111111",
+      "selection_generation": "7",
+      "state": "pending",
+      "next": "get_operation",
+      "device_id": "d3333333-3333-4333-8333-333333333333"
+    },
+    "pair_receipt": {
+      "operation_id": "53545201-0100-0000-0000-000000000003",
+      "state": "pending",
+      "next": "Approve on the TV, then get_operation.",
+      "server_epoch": "e1111111-1111-4111-8111-111111111111",
+      "device_id": null
+    },
+    "pair_complete": {
+      "operation_id": "53545201-0100-0000-0000-000000000003",
+      "outcome": "tv_approved_and_saved",
+      "selection_generation": "8",
+      "next": "Connect before remote actions.",
+      "server_epoch": "e1111111-1111-4111-8111-111111111111",
+      "device_id": "d3333333-3333-4333-8333-333333333333"
+    },
+    "forget_receipt": {
+      "operation_id": "53545201-0100-0000-0000-000000000002",
+      "state": "pending",
+      "next": "get_operation",
+      "server_epoch": "e1111111-1111-4111-8111-111111111111",
+      "device_id": "d3333333-3333-4333-8333-333333333333"
+    },
+    "written": {
+      "operation_id": "53545201-0100-0000-0000-000000000003",
+      "outcome": "written",
+      "meaning": "Socket write only; TV state unobserved.",
+      "server_epoch": "e1111111-1111-4111-8111-111111111111",
+      "device_id": "d3333333-3333-4333-8333-333333333333"
+    },
+    "stale": {
+      "code": "stale_selection",
+      "current_selected": "a5555555-5555-4555-8555-555555555555",
+      "current_selection_generation": "8",
+      "next": "Read current selection; do not retry automatically.",
+      "server_epoch": "e1111111-1111-4111-8111-111111111111",
+      "device_id": "d3333333-3333-4333-8333-333333333333"
+    },
+    "uncertain": {
+      "operation_id": "53545201-0100-0000-0000-000000000003",
+      "outcome": "uncertain",
+      "next": "The TV may have received it. Ask before another action.",
+      "server_epoch": "e1111111-1111-4111-8111-111111111111",
+      "device_id": "d3333333-3333-4333-8333-333333333333"
+    },
+    "forget": {
+      "operation_id": "53545201-0100-0000-0000-000000000002",
+      "outcome": "partial_setup",
+      "credential_removed": false,
+      "trust_removed": true,
+      "record_removed": true,
+      "next": "Resolve Keychain access; do not claim complete removal.",
+      "server_epoch": "e1111111-1111-4111-8111-111111111111",
+      "device_id": "d3333333-3333-4333-8333-333333333333",
+      "transaction_id": "a5555555-5555-4555-8555-555555555555"
+    },
+    "wake": {
+      "operation_id": "53545201-0100-0000-0000-000000000001",
+      "packet": "sent",
+      "remote": "not_ready",
+      "next": "Packet send does not prove power on.",
+      "server_epoch": "e1111111-1111-4111-8111-111111111111",
+      "device_id": "d3333333-3333-4333-8333-333333333333"
+    },
+    "fresh_list": {
+      "server_epoch": "e1111111-1111-4111-8111-111111111111",
+      "selected": null,
+      "selection_generation": "0",
+      "tvs": [],
+      "next": "No legacy import. Discover or probe explicitly, then confirm Pairing."
+    },
+    "recovery": {
+      "server_epoch": "e1111111-1111-4111-8111-111111111111",
+      "device_id": "d3333333-3333-4333-8333-333333333333",
+      "transaction_id": "a5555555-5555-4555-8555-555555555555",
+      "outcome": "forgotten",
+      "next": "Inspect shared state. No TV action was retried.",
+      "credential_removed": true,
+      "trust_removed": true,
+      "record_removed": true
+    }
   },
   "workflows": {
-    "inspect_selected": {"tools":["list_tvs","inspect_tv"],"results":["list","inspect"]},
-    "send_remote": {"tools":["list_tvs","remote_action","get_operation"],"results":["list","receipt","written"]},
-    "wake": {"tools":["list_tvs","wake_tv","get_operation"],"results":["list","receipt","wake"]},
-    "discover_probe_pair": {"tools":["list_tvs","discover_tvs","probe_tv","pair_tv","get_operation"],"results":["list","discovery","probe","pair_receipt","pair_complete"]},
-    "forget": {"tools":["list_tvs","inspect_tv","forget_tv","get_operation"],"results":["list","inspect","forget_receipt","forget"]},
-    "stale_selection": {"tools":["list_tvs","remote_action"],"results":["list","stale"]},
-    "lost_uncertain": {"tools":["list_tvs","remote_action","get_operation"],"results":["list","receipt","uncertain"]}
-  }
+    "inspect_selected": {
+      "tools": [
+        "list_tvs",
+        "inspect_tv"
+      ],
+      "results": [
+        "list",
+        "inspect"
+      ]
+    },
+    "send_remote": {
+      "tools": [
+        "list_tvs",
+        "remote_action",
+        "get_operation"
+      ],
+      "results": [
+        "list",
+        "receipt",
+        "written"
+      ]
+    },
+    "wake": {
+      "tools": [
+        "list_tvs",
+        "wake_tv",
+        "get_operation"
+      ],
+      "results": [
+        "list",
+        "receipt",
+        "wake"
+      ]
+    },
+    "discover_probe_pair": {
+      "tools": [
+        "list_tvs",
+        "discover_tvs",
+        "probe_tv",
+        "pair_tv",
+        "get_operation"
+      ],
+      "results": [
+        "list",
+        "discovery",
+        "probe",
+        "pair_receipt",
+        "pair_complete"
+      ]
+    },
+    "forget": {
+      "tools": [
+        "list_tvs",
+        "inspect_tv",
+        "forget_tv",
+        "get_operation"
+      ],
+      "results": [
+        "list",
+        "inspect",
+        "forget_receipt",
+        "forget"
+      ]
+    },
+    "stale_selection": {
+      "tools": [
+        "list_tvs",
+        "remote_action"
+      ],
+      "results": [
+        "list",
+        "stale"
+      ]
+    },
+    "lost_uncertain": {
+      "tools": [
+        "list_tvs",
+        "remote_action",
+        "get_operation"
+      ],
+      "results": [
+        "list",
+        "receipt",
+        "uncertain"
+      ]
+    },
+    "fresh_profile": {
+      "tools": [
+        "list_tvs"
+      ],
+      "results": [
+        "fresh_list"
+      ]
+    },
+    "recover_forget": {
+      "tools": [
+        "list_tvs",
+        "recover_forget",
+        "get_operation"
+      ],
+      "results": [
+        "list",
+        "forget_receipt",
+        "recovery"
+      ]
+    }
+  },
+  "wire_version": "M8 v1: scoped IDs require server_epoch; all u64 counters and UTC millisecond expiry are canonical decimal strings. MCP summaries below are proposed M10 projections, not implemented tools."
 }

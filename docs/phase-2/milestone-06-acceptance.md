@@ -4,8 +4,9 @@ Status: Active. Reviewed 2026-11-11; M6 is not complete.
 
 M7 completed on 2026-11-12 under its authorized entry exception. Its
 [completion review](milestone-07-review.md) supplies the assigned deterministic
-runtime/GUI evidence and measured limits. This does not accept the Keychain
-experiment or choose the final background process; those M6 gates remain open.
+runtime/GUI evidence and measured limits. Subsequent owner decisions select
+same-executable server mode and remove legacy device-key migration from scope;
+see the dated updates below. M6 is not automatically marked complete.
 
 ## Owner decisions
 
@@ -27,6 +28,47 @@ The owner confirmed these choices during the 2026-11-11 review:
   but does not claim those fields prove human approval. Pairing still requires
   TV approval. No extra GUI approval ceremony is required for MCP.
 
+## Owner process selection: 2026-11-12
+
+Use an on-demand background process running the same signed executable in
+`--server` mode. No login registration or root daemon is selected. GUI and
+server are separate processes with one shared code identity; this is not an
+OS-enforced credential boundary between modes. Keep separate composition
+modules and prevent the GUI mode from owning TV/storage after M9 cutover.
+
+Signed operation still needs verification under the selected identity; process
+selection alone does not prove credential access. The later scope decision
+below supersedes the legacy migration experiment.
+
+## Owner credential scope update: 2026-11-12
+
+The owner confirmed that no device-key migration, including synthetic legacy
+migration, is needed. Remove the old-GUI-to-server credential migration and
+synthetic migration experiment from required acceptance. Do not build migration
+machinery, delete existing items or transfer credentials as part of this scope
+change. Historical probe instructions remain reference material, not a gate.
+
+Keep Keychain storage for newly created pairing credentials. M9 must verify
+signed server save/read/update/delete, persistence across restart and upgrade,
+zero routine prompts, and noninteractive locked/denied/interaction-required
+failures. Development uses fake credential ports. This changes the acceptance
+scope; it does not claim those signed tests passed or mark M6 Done.
+
+## Owner initial-profile decision: 2026-11-12
+
+Start the new server with a fresh, empty device profile. Initial state has no
+saved TVs, selected TV, trust records or pairing credentials; adding a TV and
+Pairing are explicit first-use operations. Do not import legacy device data.
+Use a distinct profile/storage identity so old preferences, trust, recovery
+markers and Keychain items cannot be loaded accidentally. Missing credentials
+in this new profile are expected; locked/denied access is still an error.
+
+This decision authorizes the fresh-start implementation, not deletion of
+existing local files or Keychain items during planning. Legacy cleanup is a
+separate action. Restart of an initialized new profile restores its saved TVs;
+fresh start is not a reset on every launch. M9 must prove empty first launch,
+new pairing persistence, restart/upgrade continuity and single profile ownership.
+
 ## M6 exit and evidence
 
 | Gate | Evidence needed for M6 | Current state |
@@ -34,10 +76,10 @@ The owner confirmed these choices during the 2026-11-11 review:
 | Operation and ownership contract | Complete operation/error/event matrices, migration map, admission and recovery rules, and assigned downstream tests | Documented; admission and timing ambiguities corrected in this review |
 | Lifecycle feasibility | Focused signed detached-launch, parent-exit, occupied-port, Stop/Resume and crash probes with isolated storage | Re-run and passed on 2026-11-11; accepted for M6 design freeze |
 | Endpoint and MCP feasibility | Stable per-user URL/credential-helper design and versioned fake-endpoint negotiation; explain active-client limitation | CLI 2.1.322 fake negotiation passed on 2026-11-11; accepted for M6 design freeze; real endpoint is M8/M10 work |
-| Keychain feasibility | Synthetic old-GUI item in isolated desktop account; signed candidate read/update/delete and denied/locked/prompt results | Not run; prepared probe identities do not prove final server identity |
-| Process choice | Select same-executable server mode or signed helper from evidence; document restrictions and M9 verification | Conditional detached-process candidate; final identity/access decision open |
+| Legacy Keychain migration | No migration required by owner decision on 2026-11-12 | Removed from scope, including the synthetic old-GUI experiment; fresh-credential signed behavior is M9 evidence |
+| Process choice | Document chosen identity, restrictions and M9 verification | Owner selected on-demand same-executable `--server` mode on 2026-11-12; signed Keychain compatibility and M9 final-identity verification remain open |
 | Measurement | Reproducible sanitized catalog/workflow proxy and explicit real-client measurement owner | Proxy reproduced on 2026-11-11; actual tokens and model turns belong to M10 |
-| Acceptance | Update overview, architecture, evidence and changelog; record owner acceptance and required Cargo checks | Cargo checks and 141 tests passed on 2026-11-11; final acceptance waits for the Keychain gate |
+| Acceptance | Update overview, architecture, evidence and changelog; record owner acceptance and required Cargo checks | Cargo checks and 141 tests passed on 2026-11-11; final acceptance review remains pending under the revised scope |
 
 Each new experiment records date, source revision, OS and client versions,
 bundle/code identity, isolated profile, exact command, expected result,
@@ -49,8 +91,8 @@ historical evidence, not a statement about the current machine's state.
 
 A feasibility failure may change the process design. A probe with a different
 identity may support a conditional choice but cannot waive M9's real-identity
-cutover gate. A missing focused Keychain experiment remains an M6 blocker;
-production-only tests are assigned below instead of blocking design work.
+cutover gate. The removed legacy migration experiment is no longer an M6
+blocker; fresh-credential production tests are assigned below.
 LaunchAgent registration is optional research on a rejected alternative.
 
 ## Handoff and implementation tests
@@ -59,7 +101,7 @@ LaunchAgent registration is optional research on a rejected alternative.
 | --- | --- |
 | M7 | Fake-port operation parity, atomic admission and deduplication, two-client selection interleavings, late effects, durable-store crash injection, bounded memory and fake-time deadline/cancellation tests |
 | M8 | Authenticated HTTP/readiness/events, Host/Origin and input validation, bootstrap peer checks, rotation/revocation, single-instance locking, endpoint collisions, safe manifest/socket paths, and isolated development profile |
-| M9 | Full GUI API parity, signed chosen process identity, actual legacy-item migration and backup/rollback, Local Network attribution/denial/recovery, zero routine prompts and atomic profile cutover |
+| M9 | Full GUI API parity, signed chosen process identity, fresh-credential Keychain lifecycle and profile cutover backup/rollback, Local Network attribution/denial/recovery, zero routine prompts and atomic profile cutover |
 | M10 | Real signed `/mcp` with configured Claude Code, protocol conformance, tool confirmation, absent-server start/sticky Stop, auth refresh, actual model-visible token and call budgets with tool search on/off |
 | M11 | Upgrade/logout/sleep/wake/fast-user-switch integration, two-client failure/restart review, accessibility, sanitized hardware matrix and final legacy-path removal |
 

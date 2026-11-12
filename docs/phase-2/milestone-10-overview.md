@@ -22,6 +22,43 @@ the background server's `/mcp` Streamable HTTP endpoint.
   supplies a client credential and starts/attaches to the server on demand;
   no manual server command or token copy is required.
 
+## Entry and delivery gates
+
+Planning uses M6's contract, the completed M7 runtime and
+[M8's accepted isolated API/client/lifecycle handoff](milestone-08-review.md).
+M9's signed production cutover remains Planned; M8 fake-process evidence does
+not accept an installed MCP server. M10 remains Planned.
+
+Reuse M8's frozen command/query boundary, ID/counter codecs, stable identity,
+private lookup, limits and protected attach/Stop contract. Freeze the proposed
+15-tool catalog's final schemas/annotations and real client budgets as listed
+in the architecture; executable corpus fixtures already match M8's wire.
+Installed acceptance requires M9's signed executable, fresh-profile and
+credential gates. Work ahead of a required predecessor needs a recorded
+phase-plan exception; planning does not grant one.
+
+Target only `2026-07-28` initially, as selected by M6. Recheck the installed
+Claude Code version against the real endpoint. The helper reuses the chosen
+same-executable signed bundle and M8 bootstrap; MCP cannot Resume or replace
+a server. No client configuration changes are part of planning.
+
+## Delivery order
+
+1. Freeze predecessor contracts and reconcile the 13-tool catalog, recovery
+   variants and lookup behavior with the shared service/wire fields.
+2. Implement authenticated revision discovery, JSON-RPC framing, deterministic
+   catalog/schema and read-only tools against fake ports.
+3. Add typed mutations and compact outcomes; prove confirmation, deduplication,
+   cancellation and cross-client selection behavior.
+4. Implement the signed header-helper mode and opt-in GUI connection action,
+   with isolated configuration tests before installed-client review.
+5. Run signed Claude Code smoke/workflow tests, measure actual context/calls
+   with tool search on/off, then write a completion review and M11 handoff.
+
+The architecture assigns boundaries and evidence to these slices. No new
+source/app/text-input features, generic executor, remote hosting, OAuth
+service, login registration or Claude Desktop integration is included.
+
 ## Completion checklist
 
 - [ ] `/mcp` accepts the selected revision's Streamable HTTP requests and
@@ -75,7 +112,8 @@ the background server's `/mcp` Streamable HTTP endpoint.
 ## References
 
 - [M6 acceptance and test ownership](milestone-06-acceptance.md)
-
+- [M6 token and workflow budgets](milestone-06-mcp-budget.md)
+- [Sanitized workflow corpus](mcp-corpus.json)
 - [Architecture](milestone-10-architecture.md)
 - [Target architecture](target-architecture.md)
 - [Lifecycle and security research](server-lifecycle-security.md)

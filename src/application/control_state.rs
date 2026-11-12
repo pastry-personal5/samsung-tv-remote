@@ -69,6 +69,23 @@ pub struct ControlState {
 }
 
 impl ControlState {
+    /// Copy authenticated owner facts into a client projection. This creates
+    /// no server authority; every submitted request still faces owner guards.
+    pub(crate) fn projected(
+        selected: Option<DeviceDisplay>,
+        generation: u64,
+        pairing: PairingState,
+        connection: ConnectionState,
+        playback: PlaybackState,
+    ) -> Self {
+        Self {
+            selection: selected.map(Selection::Selected).unwrap_or_default(),
+            selection_generation: generation,
+            pairing,
+            connection,
+            playback,
+        }
+    }
     /// Creates a new state with no selected TV.
     pub const fn none() -> Self {
         Self {

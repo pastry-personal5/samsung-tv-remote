@@ -17,8 +17,48 @@ use crate::domain::DeviceId;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct ClientId(pub u64);
 
+/// Non-secret, revocable authority shared with an external access adapter.
+/// Revocation serializes with the owner's synchronous admission transition.
+#[derive(Clone)]
+pub struct AdmissionAuthorization(Arc<std::sync::RwLock<bool>>);
+
+impl Default for AdmissionAuthorization {
+    fn default() -> Self {
+        Self(Arc::new(std::sync::RwLock::new(true)))
+    }
+}
+
+impl AdmissionAuthorization {
+    pub fn revoke(&self) {
+        *self.0.write().expect("authorization lock") = false;
+    }
+
+    pub fn is_active(&self) -> bool {
+        *self.0.read().expect("authorization lock")
+    }
+
+    pub(crate) fn at_admission<T>(&self, admit: impl FnOnce() -> T) -> Option<T> {
+        let active = self.0.read().expect("authorization lock");
+        if !*active {
+            return None;
+        }
+        Some(admit())
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct Epoch(pub(crate) u128);
+
+impl Epoch {
+    /// Lossless boundary representation; an epoch carries no authority by itself.
+    pub const fn from_u128(value: u128) -> Self {
+        Self(value)
+    }
+
+    pub const fn as_u128(self) -> u128 {
+        self.0
+    }
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct OperationId(pub u64);
@@ -96,6 +136,7 @@ pub struct CandidateId(pub OperationId, pub u8);
 pub struct Candidate {
     pub id: CandidateId,
     pub host: TvHost,
+    pub expires_at: std::num::NonZeroU64,
 }
 
 /// Client-bound, expiring evidence. Retention of an outcome does not extend
@@ -105,12 +146,23 @@ pub struct Observation {
     pub id: OperationId,
     pub host: TvHost,
     pub observation: ProbeObservation,
+    pub expires_at: std::num::NonZeroU64,
+}
+
+pub(crate) fn display_deadline(retention: std::time::Duration) -> std::num::NonZeroU64 {
+    let deadline = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .saturating_add(retention)
+        .as_millis();
+    std::num::NonZeroU64::new(u64::try_from(deadline).unwrap_or(u64::MAX).max(1))
+        .expect("positive display timestamp")
 }
 
 #[derive(Debug, Clone)]
 pub enum Outcome {
     Discovered(Vec<Candidate>),
-    Probed(Observation),
+    Probed(Box<Observation>),
     Paired(SavedDevice),
     PairFailed(super::tv_control_coordinator::PairFlowError),
     Saved(SavedDevice),
@@ -190,6 +242,26 @@ pub struct Receipt {
     pub id: OperationId,
     pub metadata: OperationMetadata,
     pub outcome: Option<Outcome>,
+    /// Display deadline captured once at terminalization. Eviction uses only
+    /// the registry's monotonic clock, never this wall-clock value.
+    /// UTC milliseconds since Unix epoch; compact storage keeps receipts inline.
+    pub expires_at: Option<std::num::NonZeroU64>,
+    /// Facts captured with terminalization, never reconstructed by a later read.
+    pub terminal_state: Option<Box<TerminalState>>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct TerminalState {
+    pub selected: Option<DeviceId>,
+    pub generation: u64,
+    pub configuration_revision: Option<u64>,
+}
+
+/// Private references captured in the same owner transition as shared state.
+#[derive(Debug, Clone)]
+pub struct ClientSnapshot {
+    pub snapshot: Snapshot,
+    pub recent_operations: Vec<OperationId>,
 }
 
 #[derive(Debug, Clone)]
@@ -210,6 +282,7 @@ pub enum ServiceError {
     SubscriberLimit,
     ClientLimit,
     InvalidPayload,
+    Unauthorized,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -223,6 +296,8 @@ pub enum StartupState {
 
 #[derive(Debug, Clone)]
 pub struct Snapshot {
+    /// Lifecycle fence can close admission before durable Stop or drain begins.
+    pub admission_closed: bool,
     pub epoch: Epoch,
     pub revision: u64,
     pub startup: StartupState,
@@ -256,16 +331,29 @@ pub struct Event {
 /// A closed receiver means resubscribe atomically. No replay is promised.
 pub struct Subscription {
     pub snapshot: Snapshot,
+    pub recent_operations: Vec<OperationId>,
     pub events: mpsc::Receiver<Event>,
 }
 
 pub(crate) enum Message {
+    Fence(
+        Epoch,
+        AdmissionAuthorization,
+        oneshot::Sender<Result<(), ServiceError>>,
+    ),
     Submit(
         ClientId,
         Request,
         oneshot::Sender<Result<Receipt, ServiceError>>,
     ),
+    AuthorizedSubmit(
+        ClientId,
+        Request,
+        AdmissionAuthorization,
+        oneshot::Sender<Result<Receipt, ServiceError>>,
+    ),
     Snapshot(oneshot::Sender<Snapshot>),
+    ClientSnapshot(ClientId, oneshot::Sender<ClientSnapshot>),
     Subscribe(
         ClientId,
         oneshot::Sender<Result<Subscription, ServiceError>>,
@@ -299,9 +387,28 @@ impl ControlService {
             .await?
     }
 
+    pub async fn submit_authorized(
+        &self,
+        request: Request,
+        authorization: AdmissionAuthorization,
+    ) -> Result<Receipt, ServiceError> {
+        let (reply, response) = oneshot::channel();
+        self.exchange(
+            Message::AuthorizedSubmit(self.client, request, authorization, reply),
+            response,
+        )
+        .await?
+    }
+
     pub async fn snapshot(&self) -> Result<Snapshot, ServiceError> {
         let (reply, response) = oneshot::channel();
         self.exchange(Message::Snapshot(reply), response).await
+    }
+
+    pub async fn client_snapshot(&self) -> Result<ClientSnapshot, ServiceError> {
+        let (reply, response) = oneshot::channel();
+        self.exchange(Message::ClientSnapshot(self.client, reply), response)
+            .await
     }
 
     pub async fn subscribe(&self) -> Result<Subscription, ServiceError> {

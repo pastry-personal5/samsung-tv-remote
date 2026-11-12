@@ -247,7 +247,7 @@ async fn probe(service: &ControlService, key: &str, host: TvHost) -> Observation
     let Some(Outcome::Probed(observed)) = terminal(service, receipt.id).await.outcome else {
         panic!("probe failed")
     };
-    observed
+    *observed
 }
 fn pair(snapshot: &Snapshot, observation: &Observation, replace: Option<DeviceId>) -> Command {
     Command::Pair {

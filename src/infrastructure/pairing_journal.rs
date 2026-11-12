@@ -163,37 +163,18 @@ impl LocalRecoveryJournal {
         if marker.transaction != transaction || !marker.complete() {
             return Err(RepositoryError::Corrupt);
         }
-        fs::remove_file(&self.file.path).map_err(recovery_io_error)?;
-        let parent = self
-            .file
-            .path
-            .parent()
-            .ok_or(RepositoryError::Unavailable)?;
-        File::open(parent)
-            .and_then(|dir| dir.sync_all())
-            .map_err(recovery_io_error)?;
+        self.file.remove().map_err(recovery_io_error)?;
         if let Some(backup) = marker.backup {
-            let path = self.backup_file(backup)?.path;
-            match fs::remove_file(path) {
-                Ok(()) => File::open(parent)
-                    .and_then(|dir| dir.sync_all())
-                    .map_err(recovery_io_error)?,
-                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-                Err(error) => return Err(recovery_io_error(error)),
-            }
+            self.backup_file(backup)?
+                .remove()
+                .map_err(recovery_io_error)?;
         }
         Ok(())
     }
     fn backup_file(&self, _transaction: DeviceId) -> Result<JsonFile, RepositoryError> {
-        // One serialized profile has one backup slot, including orphaned data
-        // from a crash before preparation. Repeated retries cannot grow files.
-        Ok(JsonFile::new(
-            self.file
-                .path
-                .parent()
-                .ok_or(RepositoryError::Unavailable)?
-                .join("pairing-backup.json"),
-        ))
+        self.file
+            .sibling("pairing-backup.json")
+            .map_err(recovery_io_error)
     }
     pub(super) fn write_backup(&self, backup: &PairingBackup) -> Result<(), RepositoryError> {
         let device = &backup.device;

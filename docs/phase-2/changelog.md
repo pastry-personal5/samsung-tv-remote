@@ -2,6 +2,115 @@
 
 Status: Active
 
+- 2026-11-12 — Follow-up M8 code review fixed cancelled submissions losing
+  lookup recovery, SSE idle deadlines resetting on read cancellation, slow
+  lookups blocking event consumption and transient subscription failures
+  permanently blocking reconnect. Added cancellation, heartbeat/idle and HTTP
+  status regressions. All recovery remains lookup-only; no mutations replay.
+  See the [review findings](milestone-08-review.md#follow-up-code-review-2026-11-12).
+
+- 2026-11-12 — Completed P2-M8 under the recorded fake-profile entry exception:
+  authenticated full `/v1` HTTP/SSE, same-executable detached launch, protected
+  listener proof, sticky Stop/explicit Resume/restart and the existing-GUI
+  development probe. Added actual HTTP fault/load and process/crash/rotation
+  fixtures, strict non-promotable development documents, measured overlapping
+  profile output, native capture and executable contract/corpus checks.
+  [Review](milestone-08-review.md) maps all sixteen gates; captured Cargo
+  validation passes. M9 retains signed peer/fresh-Keychain and full GUI cutover;
+  M10 retains MCP and real token budgets; M11 retains signed session integration.
+
+- 2026-11-12 — Added M8's authenticated loopback HTTP/SSE library, guarded
+  routing and real HTTP fake-effect fixtures. Added the owner admission fence,
+  durable Stop actor, failure/lost-reply retention and lock settlement tests;
+  captured stable terminal generation/configuration facts. Reserved query and
+  management capacity under slow mutation and failed-auth traffic. Executable
+  bootstrap, detached lifecycle, Resume and GUI integration were still open
+  at that initial slice; the completion record above supersedes that status.
+
+- 2026-11-12 — Expanded the P2-M10 plan with predecessor entry gates,
+  protocol/catalog boundaries, explicit 13-tool service mappings and pending
+  schema reconciliation, operation cancellation/recovery, signed same-executable
+  header helper and opt-in Claude Code configuration. Added delivery slices,
+  deterministic and installed-client evidence ownership, and actual token/call
+  acceptance gates. M10 remains Planned; no client configuration, implementation
+  or signed-platform acceptance is claimed.
+
+- 2026-11-12 — Started M8 implementation: strict request/wire codecs, safe
+  outcome projections, private atomic operation references, stable display
+  expiry, owner-ordered authorization revocation, shared access policy, secure
+  runtime-file/lock primitives and fake-clock reconnect policy. Added deterministic
+  fixtures and corrected the no-packet Power readiness projection. M8 remains
+  In progress; HTTP serving, process lifecycle and GUI integration remain open.
+
+- 2026-11-12 — Expanded the P2-M9 plan against the current in-process GUI and
+  partial M8 wire work. Specified M8 entry/release gates, client/projection
+  ownership, request identity and lost-response recovery, external-selection
+  and draft conflicts, workflow parity, lifecycle UI and signed fresh-profile
+  verification. Removed superseded legacy-migration acceptance wording;
+  preserved existing legacy data and owner decisions. Added delivery slices
+  and an evidence matrix. M9 remains Planned; no implementation, Cargo or
+  signed-platform acceptance is claimed.
+
+- 2026-11-12 — Owner requested automatic GUI server connection/reconnection in
+  the background, starting at short intervals with exponential backoff capped
+  at one hour. Applied to M8's probe and M9's shared client: immediate first
+  attempt, then 1-second doubling delays, repeated hourly retries, one bounded
+  attempt/timer and reset after 30 healthy seconds. Preserve sticky Stop,
+  explicit incompatible-build restart, prompt-free credential gates and no
+  mutation replay; require fake-clock and subprocess outage evidence.
+
+- 2026-11-12 — Reviewed M8 against the M7 service and current M6 wire draft.
+  Required explicit contract decisions for ID encoding, integer precision,
+  stable expiry, recent-operation privacy and conflicting body budgets. Added
+  revocation/admission ordering, authenticated attach transcript, Stop crash
+  boundaries/lock ordering, fake-profile restart isolation and reserved load
+  capacity. Owner interview selected minimal wiring in the existing GUI,
+  explicit restart on build mismatch and stream closure on credential rotation.
+  [Plan review](milestone-08-plan-review.md) separates planning fixes from
+  implementation and signed-platform evidence; M8 remains Planned.
+
+- 2026-11-12 — Consolidated the M8 plan around the owner's decisions:
+  same-executable on-demand `--server`, fresh empty profile with distinct
+  namespaces, no legacy/synthetic migration, and isolated fake-port entry.
+  Made complete API coverage, runnable lifecycle and an early GUI/API probe
+  explicit completion requirements and implementation slices. Assigned signed
+  fresh-credential/peer verification to M9 and full signed sessions to M11;
+  preserved the M6 Host/Origin policy instead of silently tightening it.
+  M8 remains Planned; this update implements no server or GUI behavior.
+
+- 2026-11-12 — The owner chose a fresh, empty server device profile with no
+  legacy import. Require distinct storage/credential namespaces, empty first
+  launch, explicit first Pairing and persistence across subsequent launches.
+  Existing local data is not deleted by this planning decision.
+
+- 2026-11-12 — The owner confirmed no device-key migration is needed,
+  including synthetic legacy migration. Removed that experiment as an M6
+  blocker and removed old-GUI credential migration from the M9 plan. Retain
+  fresh-credential signed Keychain lifecycle/prompt/failure verification in M9.
+  No existing item deletion, credential transfer or M6 completion is implied.
+
+- 2026-11-12 — The owner selected an on-demand background process using
+  the same signed executable in `--server` mode. Updated M6 acceptance and
+  M8/target composition plans: dispatch before Iced, retain default GUI launch,
+  and use separate composition modules rather than a second server binary.
+  Shared code identity does not isolate Keychain access between modes. Signed
+  legacy access/migration evidence remains open; M6 is not accepted by this
+  decision and production cutover remains M9-gated.
+
+- 2026-11-12 — The owner authorized isolated M8 HTTP work with fake
+  credentials while M6's signed Keychain/process gates remain open. Recorded
+  the M8 entry exception. Required outcomes include complete deterministic API
+  coverage, runnable background lifecycle and an early isolated GUI connection
+  probe. Shipping GUI migration and production profile access remain M9 work.
+
+- 2026-11-12 — Expanded the P2-M8 plan against the completed M7 runtime.
+  Added contract reconciliation for opaque IDs, recovery and generation
+  fields; HTTP/access/bootstrap boundaries; secure endpoint lifecycle,
+  Stop/drain settlement; proposed transport budgets, implementation slices
+  and deterministic verification ownership. M8 remains Planned. M6's signed
+  Keychain/process gates remain open; no M8 entry exception, production
+  profile access or signed integration acceptance is inferred from planning.
+
 - 2026-11-12 — Reviewed M7 and fixed concurrent Pair/Wake cancellation,
   terminal connection projections, and successful preference-write profile
   reconciliation. Added six deterministic regression tests; the M7 review

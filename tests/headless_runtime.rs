@@ -7,7 +7,7 @@ use samsung_tv_remote::application::credential_store::{PairingToken, SecretError
 use samsung_tv_remote::application::device_repository::{RepositoryError, SavedDevice};
 use samsung_tv_remote::application::runtime::{Runtime, RuntimeLimits};
 use samsung_tv_remote::application::tv_address::TvHost;
-use samsung_tv_remote::application::tv_control_coordinator::AppServices;
+use samsung_tv_remote::application::tv_control_coordinator::{AppServices, WakeStage};
 use samsung_tv_remote::application::tv_discovery::{DiscoveryError, TvDiscovery};
 use samsung_tv_remote::application::tv_session::SessionFuture;
 use samsung_tv_remote::application::tv_setup_service::{
@@ -1192,6 +1192,7 @@ async fn disconnected_power_reachable_is_ready_without_key_or_packet() {
     ));
     assert!(writes.lock().unwrap().is_empty());
     assert_eq!(wake.0.load(std::sync::atomic::Ordering::SeqCst), 0);
+    assert_eq!(service.snapshot().await.unwrap().wake, WakeStage::Connected);
     runtime.drain().await;
 }
 
@@ -1951,4 +1952,93 @@ async fn connection_supervisor_failure_clears_connecting_projection() {
         samsung_tv_remote::application::ConnectionState::Failed
     );
     assert!(!state.storage_pending);
+}
+
+#[tokio::test(start_paused = true)]
+async fn private_snapshot_references_and_terminal_display_expiry_are_stable() {
+    let runtime = Runtime::start(
+        services(Arc::new(FakeSetup::default())),
+        RuntimeLimits {
+            retention: Duration::from_secs(30),
+            ..RuntimeLimits::default()
+        },
+    );
+    let alice = runtime.client(ClientId(1));
+    let bob = runtime.client(ClientId(2));
+    let snapshot = ready(&alice).await;
+    let request = request(&snapshot, "private", Command::Discover);
+    let receipt = alice.submit(request.clone()).await.unwrap();
+    assert!(receipt.outcome.is_some());
+    assert!(receipt.expires_at.is_some());
+    let state = alice.client_snapshot().await.unwrap();
+    assert_eq!(state.recent_operations, vec![receipt.id]);
+    let subscription = alice.subscribe().await.unwrap();
+    assert_eq!(subscription.recent_operations, vec![receipt.id]);
+    assert_eq!(subscription.snapshot.revision, state.snapshot.revision);
+    assert!(bob
+        .client_snapshot()
+        .await
+        .unwrap()
+        .recent_operations
+        .is_empty());
+    assert!(bob.subscribe().await.unwrap().recent_operations.is_empty());
+    assert!(matches!(
+        bob.operation(snapshot.epoch, receipt.id).await.unwrap(),
+        Lookup::OutcomeUnavailable
+    ));
+    tokio::time::advance(Duration::from_secs(29)).await;
+    assert_eq!(
+        alice.submit(request).await.unwrap().expires_at,
+        receipt.expires_at
+    );
+    match alice.operation(snapshot.epoch, receipt.id).await.unwrap() {
+        Lookup::Known(lookup) => assert_eq!(lookup.expires_at, receipt.expires_at),
+        _ => panic!("retained result"),
+    }
+    tokio::time::advance(Duration::from_secs(1)).await;
+    assert!(alice
+        .client_snapshot()
+        .await
+        .unwrap()
+        .recent_operations
+        .is_empty());
+    runtime.drain().await.settled().await.unwrap();
+}
+
+#[tokio::test]
+async fn revocation_between_middleware_and_owner_prevents_admission() {
+    use samsung_tv_remote::application::control_service::AdmissionAuthorization;
+    let setup = Arc::new(FakeSetup::default());
+    let runtime = Runtime::start(services(setup.clone()), RuntimeLimits::default());
+    let client = runtime.client(ClientId(1));
+    let snapshot = ready(&client).await;
+    let authorization = AdmissionAuthorization::default();
+    // Represent middleware success, followed by rotation/revocation before the
+    // queued message can reach the owner. No credential is carried to it.
+    assert!(authorization.is_active());
+    authorization.revoke();
+    assert!(matches!(
+        client
+            .submit_authorized(
+                request(&snapshot, "revoked", Command::Discover),
+                authorization
+            )
+            .await,
+        Err(ServiceError::Unauthorized)
+    ));
+    assert!(matches!(
+        client
+            .lookup(snapshot.epoch, "revoked".into())
+            .await
+            .unwrap(),
+        Lookup::OutcomeUnavailable
+    ));
+    assert!(client
+        .client_snapshot()
+        .await
+        .unwrap()
+        .recent_operations
+        .is_empty());
+    assert_eq!(setup.profile.lock().unwrap().writes, 0);
+    runtime.drain().await.settled().await.unwrap();
 }

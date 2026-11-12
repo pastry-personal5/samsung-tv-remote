@@ -3,6 +3,22 @@
 Status: Proposed design input for P2-M6; platform behavior requires signed-bundle
 tests before a shipping claim.
 
+## Credential scope update: 2026-11-12
+
+The owner confirmed no device-key migration is needed, including synthetic
+legacy migration. Earlier legacy migration/probe requirements below are
+superseded by this decision. Signed fresh-credential Keychain behavior remains
+M9 verification; existing items are not deleted or transferred by this scope
+change. See the [current acceptance record](milestone-06-acceptance.md#owner-credential-scope-update-2026-11-12).
+
+## Owner decision update: 2026-11-12
+
+The owner selected on-demand background launch using the same signed app
+executable in `--server` mode. The signed Keychain experiment remains open;
+process selection does not establish legacy access or accept M6. Earlier
+candidate comparisons below retain their research/historical context. See the
+[current acceptance record](milestone-06-acceptance.md#owner-process-selection-2026-11-12).
+
 ## Product rule
 
 No routine terminal command, manual port selection, token copy, or server-start

@@ -1,6 +1,7 @@
 # P2-M6 control contract draft
 
-Status: M7 application contract implemented; wire design remains for M8–M10. This is not a
+Status: M7 application contract and M8 fake-profile `/v1` implemented; production
+cutover and MCP remain M9–M10. This is not a
 claim that `/v1` or `/mcp` exists in the shipped app. A signed lifecycle and
 Keychain prototype and a real Claude Code connection to the product server
 remain release gates.
@@ -10,14 +11,19 @@ choices and assigns production verification to M7–M11. MCP confirmation is
 an explicit typed step; human approval belongs to the client, with TV-side
 Pairing approval still required.
 
+The [M8 wire decisions](milestone-08-wire.md) freeze canonical scoped IDs,
+mandatory epoch context, decimal-string counters and strict fields. The isolated
+first profile is empty and imports no legacy data or credentials.
+
 ## Common envelope and admission
 
 `ClientIdentity` is assigned by authentication. It is never a JSON field. A
 fresh random `server_epoch` identifies each process lifetime. Within an epoch,
 `selection_generation` starts at zero and increases whenever selection is
-explicitly changed, including reselecting the current saved TV. This preserves
-the present `TvControlCoordinator::select_saved` behavior, which stops the
-session and reconnects even for the same ID. Restoring a selected ID on server
+explicitly changed, including reselecting the current saved TV. The runtime
+fences the current session even for the same ID; a separate Connect request
+establishes remote readiness. A GUI may sequence that explicit follow-up as
+part of its select-TV interaction. Restoring a selected ID on server
 startup does not reconnect and does not pretend to restore the old generation.
 Each saved device also has an epoch-scoped `config_revision`, initialized to
 zero from the restored repository and incremented only after a durable Wake
@@ -81,8 +87,9 @@ mailbox. Remote capacity is 32 waiting plus one writer. At most eight
 non-remote effects run, including timed-out blocking workers. Discovery/probe
 starts conservatively require fewer than two existing workers. One serialized
 storage lane spans all IDs. Drain/completions/timers have priority and ingress
-has an opportunity at least every 16 owner transitions. The proposed HTTP body
-limit is 64 KiB; M8 must also enforce the runtime's type-specific field limits.
+has an opportunity at least every 16 owner transitions. The HTTP mutation body limit is 16 KiB; M8 also enforces the runtime's
+type-specific field limits. Maximum-envelope fixtures are in
+`tests/control_wire.rs`.
 
 M7 fixes candidate caps at 1,024 global/64 per client and 32 per discovery;
 observations at 128 global/eight per client; subscribers at 64 global/four per
@@ -187,19 +194,21 @@ are versioned at the adapter and map explicitly to application types.
 | `GET /v1/state` | Atomic snapshot: epoch, revision, selected ID, generation, saved-device summaries and per-device config revisions, Pairing/connection/Wake facts, recent operation references. |
 | `GET /v1/devices/{id}` | Safe saved metadata and Wake settings; no token or raw certificate. |
 | `POST /v1/discoveries` | Common mutation envelope; receipt for bounded SSDP discovery and candidate handles. |
-| `POST /v1/probes` | Envelope plus validated local host or candidate handle; receipt for a certificate observation. |
+| `POST /v1/probes` | Envelope plus validated local `host` and optional client-bound `candidate_id`; receipt for a certificate observation. |
 | `POST /v1/pairings` | Envelope, attempt and observation IDs, exact full observed fingerprint, explicit confirmation, label, required observed generation, optional re-pair device ID. TV approval and durable commit are later results. |
 | `POST /v1/selection` | Envelope, `device_id`, `expected_generation`; receipt followed by durable selection event and new generation. |
 | `POST /v1/connections` | Envelope, selected `device_id` and generation; receipt for remote readiness. |
-| `PUT /v1/devices/{id}/wake` | Envelope, saved ID, `expected_config_revision`, validated wired/Wi-Fi MACs and active interface; receipt for durable update. |
+| `PUT /v1/devices/{id}/wake` | Envelope, saved ID, `selection_generation`, `expected_config_revision`, validated wired/Wi-Fi MACs and active interface; receipt for durable update. |
 | `POST /v1/remote-actions` | Envelope, selected ID, generation, semantic `RemoteAction` enum; receipt for one tracked action. `PowerToggle` owns disconnected probe-then-Wake; `PlayPause` is resolved by the server at dispatch. |
 | `POST /v1/wakes` | Envelope, selected ID and generation; receipt for one packet attempt and subsequent readiness observation. |
-| `POST /v1/wakes/{operation_id}/cancel` | Envelope; receipt for cancellation request, not a packet recall. |
+| `POST /v1/wakes/{operation_id}/cancel` | Envelope, selected `device_id` and `selection_generation`; receipt for cancellation request, not a packet recall. |
 | `POST /v1/devices/{id}/forget` | Envelope, ID, `expected_config_revision`, `confirm_device_id` equal to ID; receipt for serialized removal with per-store result. |
-| `GET /v1/operations/{id}` | Owner-authorized operation progress/result. Other clients see the shared state event but cannot read a different client's private operation details. |
+| `GET /v1/operations/{id}?epoch=...` | Owner-authorized operation progress/result. Other clients see the shared state event but cannot read a different client's private operation details. |
 | `GET /v1/operations/by-key/{key}?epoch=...` | Lost-response lookup scoped to authenticated client. Old epoch is `unknown_after_restart`. |
 | `GET /v1/events` | SSE: one atomic `snapshot`, then ordered `state_changed`/`operation_changed` revisions, or `resync_required`. |
 | `POST /v1/server/stop` | GUI management capability, epoch and operation key; persist sticky Stop before acknowledging, drain/terminalize effects, then close listeners. A lost response is checked from the owner-only marker and authenticated readiness, without restarting. |
+| `POST /v1/devices/{id}/recover-pairing` | Envelope, matching `device_id`, exact `transaction_id` and `confirm_device_id`; compensates an interrupted first Pairing only. Re-pair recovery requires fresh Pairing approval with `recovery_transaction_id`. |
+| `POST /v1/devices/{id}/recover-forget` | Envelope, matching `device_id`, exact `transaction_id` and `confirm_device_id`; retries the marker's remaining removals even when the device record is gone. |
 
 Resume is an explicit signed-GUI launcher action. While no server is
 listening, the launcher acquires the per-user lifecycle lock, validates the
@@ -214,14 +223,16 @@ fix the intended meaning of these routes for implementation review.
 Example request and receipt (synthetic IDs):
 
 ```json
-{"server_epoch":"e1111111-1111-4111-8111-111111111111","operation_key":"a2222222-2222-4222-8222-222222222222","device_id":"d3333333-3333-4333-8333-333333333333","selection_generation":7,"action":"VolumeUp"}
+{"server_epoch":"e1111111-1111-4111-8111-111111111111","operation_key":"a2222222-2222-4222-8222-222222222222","device_id":"d3333333-3333-4333-8333-333333333333","selection_generation":"7","action":"VolumeUp"}
 ```
 
 ```json
-{"operation_id":"f4444444-4444-4444-8444-444444444444","server_epoch":"e1111111-1111-4111-8111-111111111111","device_id":"d3333333-3333-4333-8333-333333333333","selection_generation":7,"state":"queued"}
+{"operation_id":"53545201-0100-0000-0000-000000000001","server_epoch":"e1111111-1111-4111-8111-111111111111","device_id":"d3333333-3333-4333-8333-333333333333","selection_generation":"7","state":"pending","result":null}
 ```
 
-`operation_id` and epoch are UUIDs. All timestamps are UTC. `expires_at` is
+`operation_id` and epoch use canonical UUID spelling. All timestamps are UTC.
+The [M8 wire decisions](milestone-08-wire.md) define scoped ID layout,
+lossless decimal-string counters, exact DTO fields, and parsing policy. `expires_at_unix_ms` is
 absent while pending and set when the terminal result is
 recorded. On a stale request, `409` includes the current epoch, selected ID,
 and generation after authorization, so the client can refresh without a blind
@@ -231,7 +242,7 @@ retry. Responses never include a Pairing token.
 | --- | --- | --- |
 | `400` | `invalid_request`, `invalid_target`, `invalid_confirmation` | Fix input; no operation admitted. |
 | `401`, `403` | `unauthenticated`, `forbidden` | Reauthenticate or reconnect; no effect admitted. |
-| `404` | `not_found` | Unknown saved target or no retained operation visible to this identity; an operation may have expired. |
+| `404` | `not_found` | Unknown saved target. Operation lookup without a retained result uses `410`. |
 | `409` | `stale_epoch`, `stale_selection`, `stale_config`, `operation_key_conflict`, `observation_expired` | Read state or re-probe; no new effect admitted. |
 | `410` | `outcome_unavailable`, `unknown_after_restart` | Key lookup has no retained result or the epoch changed; outcome cannot be recovered, so never auto-replay. |
 | `412` | `pairing_required`, `certificate_changed`, `confirmation_required` | Complete a fresh guarded setup step. |
@@ -245,13 +256,13 @@ For a current-epoch new key with registry space, the owner reserves its record
 before evaluating mutable policy; a stale selection/configuration, expired
 observation, missing Pairing or target, and similar policy rejection is a
 retained terminal result. Its response uses the table’s HTTP status and error
-code and includes `operation_id`, `server_epoch`, and `expires_at`. The HTTP
+code and includes `operation_id`, `server_epoch`, and `expires_at_unix_ms`. The HTTP
 status alone does not determine admission. A known duplicate returns the
 original record even when the registry is full. A rejected FIFO/effect-capacity
 check is retained as terminal `busy` when a registry slot was reserved;
 ingress or registry saturation cannot promise retention. No rejected request
 starts a TV effect. Error bodies use
-`{ "error": { "code": "...", "message": "..." } }` and optionally a safe `current` precondition object and the admission metadata
+`{ "error": { "code": "..." } }` and optionally a safe `current` precondition object and the admission metadata
 above; no internal stack or host.
 
 `GET /v1/events` registers its subscriber and captures the initial snapshot

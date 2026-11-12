@@ -2,6 +2,14 @@
 
 Status: Active
 
+## Credential scope update: 2026-11-12
+
+The owner confirmed no device-key migration is needed, including synthetic
+legacy migration. Earlier legacy migration/probe requirements below are
+superseded by this decision. Signed fresh-credential Keychain behavior remains
+M9 verification; existing items are not deleted or transferred by this scope
+change. See the [current acceptance record](milestone-06-acceptance.md#owner-credential-scope-update-2026-11-12).
+
 ## Goal
 
 Turn the server-first product decision into a reviewable process design and a
@@ -82,9 +90,9 @@ the refactor has explicit parity checks.
 - [ ] Freeze a non-destructive data/Keychain migration and rollback design.
   In an isolated account, test a synthetic old-GUI item with candidate signed
   process identities; record reads, update/delete, denied/locked access, and
-  prompt counts. Choose the server process shape from evidence, or record a
-  conditional choice and the exact M9 cutover blocker if the probe cannot
-  represent the final identity. One explicit user-assisted migration approval
+  prompt counts. The owner selected same-executable `--server` mode on
+  2026-11-12; verify that choice and record the exact M9 cutover blocker if
+  the probe cannot represent the final identity. One explicit user-assisted migration approval
   is allowed; unattended access fails closed and routine use has zero prompts.
   Actual same-identity upgrade/migration and rollback are M9 acceptance gates.
   Development must use fake credentials or an isolated test namespace.
@@ -115,7 +123,8 @@ boundary, evidence format, review fixes, and downstream test owners.
 - [Requirement-by-requirement review](milestone-06-review.md)
 
 The design is reviewable, but M6 remains Active. The focused synthetic
-Keychain experiment and process-choice acceptance remain open. Fast-user
+Keychain experiment remains open. The owner selected same-executable
+`--server` mode on 2026-11-12; signed access verification remains pending. Fast-user
 switching, Local Network privacy attribution, real signed-server Claude Code
 workflows and actual token measurement are downstream implementation gates
 listed in the acceptance and handoff record, not prerequisites for M6 design

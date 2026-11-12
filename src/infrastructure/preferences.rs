@@ -1,9 +1,10 @@
+use super::private_files::{FileError, RuntimeDirectory, DEVELOPMENT_NAMESPACE};
 use std::collections::HashMap;
 use std::fs::{self, File, OpenOptions};
 use std::io::{Read, Write};
 use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
 use std::path::{Path, PathBuf};
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
 use serde::{Deserialize, Serialize};
 
@@ -16,7 +17,9 @@ use crate::application::tv_address::TvHost;
 use crate::application::wake::{WakeConfiguration, WakeInterface};
 use crate::domain::DeviceId;
 
-const MAX_FILE_BYTES: u64 = 1024 * 1024;
+// The full 1,024-record profile can exceed 2 MiB with valid maximally escaped
+// labels and hosts. Keep disk and HTTP bounds consistent without truncation.
+const MAX_FILE_BYTES: u64 = 4 * 1024 * 1024;
 const DEVICE_VERSION: u32 = 2;
 const TRUST_VERSION: u32 = 1;
 
@@ -49,6 +52,13 @@ struct DiskRecovery {
 }
 
 impl LocalRecoveryJournal {
+    /// Isolated profile storage uses a checked directory handle for every I/O.
+    pub fn in_private_directory(directory: Arc<RuntimeDirectory>) -> Self {
+        Self {
+            file: JsonFile::private(directory, "recovery.json"),
+        }
+    }
+
     pub fn new(app_data_dir: &Path) -> Self {
         Self {
             file: JsonFile::new(app_data_dir.join("recovery.json")),
@@ -196,21 +206,24 @@ impl RecoveryJournal for LocalRecoveryJournal {
         {
             return Err(RepositoryError::Corrupt);
         }
-        fs::remove_file(&self.file.path).map_err(recovery_io_error)?;
-        File::open(
-            self.file
-                .path
-                .parent()
-                .ok_or(RepositoryError::Unavailable)?,
-        )
-        .and_then(|parent| parent.sync_all())
-        .map_err(recovery_io_error)
+        self.file.remove().map_err(recovery_io_error)
     }
 }
 
 struct JsonFile {
     path: PathBuf,
+    private: Option<Arc<RuntimeDirectory>>,
     lock: Mutex<()>,
+}
+
+/// Development documents deliberately cannot decode as production records,
+/// even after a directory rename or an individual file copy. The explicit
+/// envelope also prevents private adapters from importing untagged data.
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct DevelopmentDocument<T> {
+    namespace: String,
+    data: T,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -268,6 +281,13 @@ impl Default for DiskTrust {
 }
 
 impl LocalDeviceRepository {
+    /// Isolated profile storage uses a checked directory handle for every I/O.
+    pub fn in_private_directory(directory: Arc<RuntimeDirectory>) -> Self {
+        Self {
+            file: JsonFile::private(directory, "devices.json"),
+        }
+    }
+
     pub fn new(app_data_dir: &Path) -> Self {
         Self {
             file: JsonFile::new(app_data_dir.join("devices.json")),
@@ -276,6 +296,13 @@ impl LocalDeviceRepository {
 }
 
 impl LocalCertificateTrustStore {
+    /// Isolated profile storage uses a checked directory handle for every I/O.
+    pub fn in_private_directory(directory: Arc<RuntimeDirectory>) -> Self {
+        Self {
+            file: JsonFile::private(directory, "trust.json"),
+        }
+    }
+
     pub fn new(app_data_dir: &Path) -> Self {
         Self {
             file: JsonFile::new(app_data_dir.join("trust.json")),
@@ -491,11 +518,92 @@ impl JsonFile {
     fn new(path: PathBuf) -> Self {
         Self {
             path,
+            private: None,
             lock: Mutex::new(()),
         }
     }
 
+    fn private(directory: Arc<RuntimeDirectory>, name: &str) -> Self {
+        Self {
+            path: PathBuf::from(name),
+            private: Some(directory),
+            lock: Mutex::new(()),
+        }
+    }
+    fn sibling(&self, name: &str) -> Result<Self, std::io::Error> {
+        if let Some(directory) = &self.private {
+            return Ok(Self::private(directory.clone(), name));
+        }
+        Ok(Self::new(
+            self.path
+                .parent()
+                .ok_or_else(|| std::io::Error::other("missing parent"))?
+                .join(name),
+        ))
+    }
+    fn name(&self) -> Result<&str, std::io::Error> {
+        self.path
+            .file_name()
+            .and_then(|v| v.to_str())
+            .ok_or_else(|| std::io::Error::other("invalid file name"))
+    }
+    fn legacy_allowed(&self) -> Result<(), std::io::Error> {
+        let forbidden = |p: &Path| {
+            p.components()
+                .any(|v| v.as_os_str() == DEVELOPMENT_NAMESPACE)
+        };
+        if forbidden(&self.path)
+            || self
+                .path
+                .parent()
+                .and_then(|p| p.canonicalize().ok())
+                .is_some_and(|p| forbidden(&p))
+        {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::PermissionDenied,
+                "development profile requires isolated adapters",
+            ));
+        }
+        Ok(())
+    }
+    fn remove(&self) -> Result<(), std::io::Error> {
+        if let Some(directory) = &self.private {
+            return directory.remove(self.name()?).map_err(private_error);
+        }
+        self.legacy_allowed()?;
+        match fs::remove_file(&self.path) {
+            Ok(()) => File::open(
+                self.path
+                    .parent()
+                    .ok_or_else(|| std::io::Error::other("missing parent"))?,
+            )?
+            .sync_all(),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
+            Err(e) => Err(e),
+        }
+    }
+
     fn read<T: for<'de> Deserialize<'de>>(&self) -> Result<Option<T>, std::io::Error> {
+        if let Some(directory) = &self.private {
+            return directory
+                .read(self.name()?, MAX_FILE_BYTES as usize)
+                .map_err(private_error)?
+                .map(|bytes| {
+                    let document: DevelopmentDocument<T> =
+                        serde_json::from_slice(&bytes).map_err(|_| {
+                            std::io::Error::new(std::io::ErrorKind::InvalidData, "invalid settings")
+                        })?;
+                    if document.namespace != DEVELOPMENT_NAMESPACE {
+                        return Err(std::io::Error::new(
+                            std::io::ErrorKind::InvalidData,
+                            "wrong development namespace",
+                        ));
+                    }
+                    Ok(document.data)
+                })
+                .transpose();
+        }
+        self.legacy_allowed()?;
         let file = match File::open(&self.path) {
             Ok(file) => file,
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
@@ -521,6 +629,23 @@ impl JsonFile {
     }
 
     fn write<T: Serialize>(&self, value: &T) -> Result<(), std::io::Error> {
+        if let Some(directory) = &self.private {
+            let bytes = serde_json::to_vec(&DevelopmentDocument {
+                namespace: DEVELOPMENT_NAMESPACE.into(),
+                data: value,
+            })
+            .map_err(|_| std::io::Error::other("settings encoding failed"))?;
+            if bytes.len() as u64 > MAX_FILE_BYTES {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    "oversized settings",
+                ));
+            }
+            return directory
+                .replace(self.name()?, &bytes)
+                .map_err(private_error);
+        }
+        self.legacy_allowed()?;
         let parent = self
             .path
             .parent()
@@ -556,6 +681,16 @@ impl JsonFile {
         }
         result
     }
+}
+
+fn private_error(error: FileError) -> std::io::Error {
+    std::io::Error::new(
+        match error {
+            FileError::TooLarge | FileError::UnsafePath => std::io::ErrorKind::InvalidData,
+            FileError::Unavailable | FileError::Locked => std::io::ErrorKind::Other,
+        },
+        "private settings unavailable",
+    )
 }
 
 #[cfg(test)]

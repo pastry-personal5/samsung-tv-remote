@@ -10,6 +10,22 @@ M7's application owner and temporary in-process GUI adapter are implemented;
 see the [M7 architecture](milestone-07-architecture.md) for actual types and
 limits. The process/HTTP/MCP portions below remain the target for later work.
 
+## Credential scope update: 2026-11-12
+
+The owner confirmed no device-key migration is needed, including synthetic
+legacy migration. Earlier legacy migration/probe requirements below are
+superseded by this decision. Signed fresh-credential Keychain behavior remains
+M9 verification; existing items are not deleted or transferred by this scope
+change. See the [current acceptance record](milestone-06-acceptance.md#owner-credential-scope-update-2026-11-12).
+
+## Initial-profile update: 2026-11-12
+
+The owner selected a fresh, empty server device profile with no legacy import.
+Use distinct storage and credential namespaces; first launch has no saved TV,
+selection, trust or pairing material. Later launches restore the new profile.
+This supersedes legacy profile-reuse assumptions below and does not authorize
+deleting old data. See the [acceptance record](milestone-06-acceptance.md#owner-initial-profile-decision-2026-11-12).
+
 ## Process and ownership
 
 ```mermaid
@@ -40,12 +56,12 @@ bundled credential helper is not an MCP CLI/stdio server. A deliberate
 reconnect silently reverses it. A crash is not a deliberate stop: the next
 client use may start a new server epoch, but never replay a TV action. Startup
 uses a single-instance guard and authenticated readiness check; an occupied
-port must not be assumed to belong to this app. P2-M6 compares a detached
-signed helper with a separate `--server` process of the same signed app
-executable for silent legacy-Keychain access, and prototypes a stable per-user
-endpoint and survival after GUI exit. An `SMAppService` LaunchAgent is a
-fallback only after reviewing its
-approval and login-bootstrap behavior. See the [lifecycle and security
+port must not be assumed to belong to this app. On 2026-11-12 the owner
+selected the same signed app executable in `--server` mode for on-demand
+background launch. The modes run in separate processes but share a code
+identity. Signed legacy-Keychain access and upgrade behavior remain evidence
+gates; the choice does not prove compatibility. No LaunchAgent or login
+registration is selected. See the [lifecycle and security
 research](server-lifecycle-security.md) for the decision and failure matrix.
 
 The [server-internal architecture](control-server-internals.md) refines this
@@ -64,14 +80,16 @@ Keep application code under `src/`:
 | `src/server/mcp/` | Streamable HTTP transport and MCP tool schemas; translation to the same application requests. |
 | `src/control_client/` | Typed HTTP client, credential setup, event subscription, and resynchronization for the GUI. |
 | `src/presentation/iced/` | Windows, local navigation and drafts, input mapping, status wording, and rendering of server facts. |
-| `src/main.rs`, `src/bin/control_server.rs` | Separate GUI and server composition roots. |
+| `src/main.rs` | Dispatch GUI or `--server` mode into separate composition modules before GUI initialization. |
 
 The runtime call path is `GUI → control_client → HTTP adapter → application
 → domain`; the HTTP hop crosses a process boundary. Compile-time dependencies
 point inward from adapters to application/domain, with infrastructure
 implementing application ports. The composition roots select concrete
-adapters. The GUI binary
-must not import application coordinator or infrastructure modules; P2-M11 adds
+adapters. GUI presentation/client modules and the GUI composition path
+must not directly own or call the application coordinator or TV/storage
+adapters; the server composition path in the same executable constructs them.
+P2-M11 adds
 an enforceable source/build check for that boundary. The GUI cutover in P2-M9
 must pass that check before release.
 

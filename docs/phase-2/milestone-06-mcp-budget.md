@@ -18,25 +18,30 @@ behavior in the installed target and verify the signed app endpoint.
 
 | Corpus item | Calls | Tool search on proxy | All tools upfront proxy |
 | --- | ---: | ---: | ---: |
-| Inspect selected | 2 | 408 | 1,962 |
-| Send remote action | 3 | 826 | 2,136 |
-| Wake and inspect outcome | 3 | 775 | 2,135 |
-| Discover, probe, Pair | 5 | 1,384 | 2,440 |
-| Forget and inspect outcome | 4 | 1,023 | 2,262 |
-| Stale selection | 2 | 574 | 2,024 |
-| Lost or uncertain result | 3 | 832 | 2,142 |
+| Inspect selected | 2 | 446 | 2,383 |
+| Send remote action | 3 | 883 | 2,567 |
+| Wake and inspect outcome | 3 | 834 | 2,568 |
+| Discover, probe, Pair | 5 | 1,614 | 3,036 |
+| Forget and inspect outcome | 4 | 1,121 | 2,763 |
+| Stale selection | 2 | 629 | 2,452 |
+| Lost or uncertain result | 3 | 891 | 2,575 |
+| Fresh empty profile | 1 | 229 | 2,231 |
+| Guarded Forget recovery | 3 | 889 | 2,610 |
 
-The M7 handoff adds selected-generation Wake edits and explicit guarded
-recovery transactions; Forget requires either the ordinary config revision
-or the recovery transaction. The table above was regenerated with those
-fields on 2026-11-12.
+Regenerated on 2026-11-12 after M8 froze canonical scoped IDs with full epoch
+on every result, lossless counter strings, exact fingerprint/host confirmations,
+selected-generation cancellation and separate guarded recovery commands. These
+are proposed MCP summaries; no `/mcp` implementation is claimed.
+`control_documentation` parses all proposed mutation samples with the real M8
+HTTP parser and checks examples/results against the native codecs.
+The 15-tool catalog is 2,053 proxy units plus 83 for the instruction; a
+key-per-tool catalog has 28 tools and 3,636 units. The largest duplicate
+result copy costs 339 units.
 
-The 13-tool semantic catalog is 1,670 proxy units, plus 83 for the shared
-instruction. A straightforward remote-key-per-tool catalog grows to 26 tools
-and 3,132 units before any workflow. The largest sampled result sequence
-adds 257 units when text duplicates structured content; ignoring that copy
-would understate the Pairing workflow. The full fingerprint
-and guarded confirmations remain in the corpus even when they cost context.
+The catalog-plus-instruction proxy (2,136) exceeds the 1,900-token M10 target,
+and the Pair workflow upfront proxy (3,036) exceeds 2,800. M10 must calibrate
+actual client/model counts and optimize presentation without dropping guards;
+these proxy overruns are recorded, not accepted as meeting the token gates.
 
 M10 measurement gates, subject to real tokenizer/client calibration:
 

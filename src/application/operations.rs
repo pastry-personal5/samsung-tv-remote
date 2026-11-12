@@ -64,6 +64,19 @@ impl Operations {
             .filter(|r| r.client == client)
             .map(|r| r.receipt.clone())
     }
+    /// Newest 64 retained references only; never include another identity's
+    /// receipts in shared events or perform a second query after a snapshot.
+    pub fn recent(&self, client: ClientId) -> Vec<OperationId> {
+        let mut ids: Vec<_> = self
+            .keys
+            .get(&client)
+            .into_iter()
+            .flat_map(|keys| keys.values().copied())
+            .collect();
+        ids.sort_unstable_by_key(|id| std::cmp::Reverse(id.0));
+        ids.truncate(64);
+        ids
+    }
     pub fn duplicate(
         &self,
         client: ClientId,
@@ -113,6 +126,8 @@ impl Operations {
             id: OperationId(self.next),
             metadata: command.metadata(self.epoch),
             outcome: None,
+            expires_at: None,
+            terminal_state: None,
         };
         self.next = self
             .next
@@ -136,7 +151,12 @@ impl Operations {
         );
         Ok((receipt, true))
     }
-    pub fn finish(&mut self, id: OperationId, outcome: Outcome) -> bool {
+    pub fn finish(
+        &mut self,
+        id: OperationId,
+        outcome: Outcome,
+        state: Option<super::control_service::TerminalState>,
+    ) -> bool {
         let Some(record) = self.records.get_mut(&id) else {
             return false;
         };
@@ -144,6 +164,8 @@ impl Operations {
             return false;
         }
         record.receipt.outcome = Some(outcome);
+        record.receipt.terminal_state = state.map(Box::new);
+        record.receipt.expires_at = Some(super::control_service::display_deadline(self.retention));
         record.terminal = true;
         *self.pending.get_mut(&record.client).expect("pending count") -= 1;
         self.expiry.push_back((Instant::now(), id));
@@ -158,15 +180,14 @@ impl Operations {
             }
         })
     }
-    pub fn drain(&mut self) {
-        let ids: Vec<_> = self
-            .records
+    pub fn pending_ids(&self) -> Vec<OperationId> {
+        self.records
             .iter()
             .filter(|(_, r)| !r.terminal)
             .map(|(id, _)| *id)
-            .collect();
-        for id in ids {
-            self.finish(id, Outcome::Drained);
-        }
+            .collect()
+    }
+    pub fn target(&self, id: OperationId) -> Option<crate::domain::DeviceId> {
+        self.records.get(&id)?.receipt.metadata.target
     }
 }

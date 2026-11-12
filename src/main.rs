@@ -12,6 +12,11 @@ use samsung_tv_remote::infrastructure::wake_udp::UdpWakeTransport;
 use samsung_tv_remote::presentation::iced::app;
 
 fn main() -> iced::Result {
+    if let Some(status) =
+        samsung_tv_remote::server::entry::dispatch(&std::env::args_os().skip(1).collect::<Vec<_>>())
+    {
+        std::process::exit(status);
+    }
     let setup = default_app_data_dir().map(|directory| {
         Arc::new(
             TvSetupService::new(

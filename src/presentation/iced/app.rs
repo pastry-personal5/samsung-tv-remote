@@ -1,3 +1,5 @@
+#[path = "remote_probe.rs"]
+mod remote_probe;
 use super::ui_message::{Message, SettingsPage, Shortcut};
 use super::view_model::{MessageSeverity, MessageSource, PrimaryView, ViewModel};
 use super::{in_process::InProcess, view};
@@ -23,6 +25,11 @@ pub struct App {
     settings_page: SettingsPage,
     view_model: ViewModel,
     adapter: Option<Arc<InProcess>>,
+    remote: Option<Arc<crate::control_client::background::Remote>>,
+    probe_mode: bool,
+    remote_status: Option<crate::control_client::background::Status>,
+    remote_management: bool,
+    remote_tags: HashMap<u64, OperationId>,
     snapshot: Option<Snapshot>,
     candidates: Vec<TvHost>,
     candidate_handles: Vec<Candidate>,
@@ -50,6 +57,11 @@ impl App {
                 settings_page: SettingsPage::Discovery,
                 view_model: ViewModel::new(&ControlState::none()),
                 adapter: None,
+                remote: None,
+                probe_mode: false,
+                remote_status: None,
+                remote_management: false,
+                remote_tags: HashMap::new(),
                 snapshot: None,
                 candidates: Vec::new(),
                 candidate_handles: Vec::new(),
@@ -84,7 +96,38 @@ impl App {
             ]),
         )
     }
+    fn boot_probe(config: crate::control_client::background::Config) -> (Self, Task<Message>) {
+        let (mut app, open) = Self::new();
+        app.probe_mode = true;
+        app.launch_connected = true;
+        app.tv_address = "synthetic-tv.invalid".into();
+        app.settings_status = "Development probe: connecting to the isolated fake server.".into();
+        app.view_model.set_service_available(false);
+        (
+            app,
+            Task::batch([
+                open,
+                if cfg!(debug_assertions)
+                    && std::env::var_os("SAMSUNG_TV_REMOTE_PROBE_CAPTURE").is_some()
+                {
+                    Task::perform(
+                        tokio::time::sleep(std::time::Duration::from_secs(8)),
+                        |_| Message::CaptureProbe,
+                    )
+                } else {
+                    Task::none()
+                },
+                Task::perform(
+                    crate::control_client::background::Remote::start(config),
+                    Message::RemoteStarted,
+                ),
+            ]),
+        )
+    }
     fn command(&mut self, command: Command) -> Task<Message> {
+        if self.probe_mode {
+            return self.remote_command(command);
+        }
         let (Some(adapter), Some(snapshot)) = (&self.adapter, &self.snapshot) else {
             return self.publish(
                 MessageSeverity::Warning,
@@ -122,6 +165,41 @@ impl App {
     }
     fn update(&mut self, message: Message) -> Task<Message> {
         match message {
+            Message::CaptureProbe if self.probe_mode && cfg!(debug_assertions) => {
+                self.main_window.map_or_else(Task::none, |id| window::screenshot(id).map(Message::ProbeCaptured))
+            }
+            Message::ProbeCaptured(screenshot) if self.probe_mode && cfg!(debug_assertions) => {
+                // Renderer-only evidence avoids capturing other applications or
+                // requiring desktop Screen Recording access. This debug hook
+                // is opt-in and exists only in the isolated fake GUI mode.
+                if let Some(path) = std::env::var_os("SAMSUNG_TV_REMOTE_PROBE_CAPTURE") {
+                    use std::io::Write;
+                    let _ = (|| -> std::io::Result<()> {
+                        let mut file = std::fs::File::create_new(path)?;
+                        write!(file, "P6\n{} {}\n255\n", screenshot.size.width, screenshot.size.height)?;
+                        let rgb: Vec<_> = screenshot.rgba.as_chunks::<4>().0.iter().flat_map(|p| p[..3].iter().copied()).collect();
+                        file.write_all(&rgb)
+                    })();
+                }
+                Task::none()
+            }
+            Message::CaptureProbe | Message::ProbeCaptured(_) => Task::none(),
+            Message::ResumeServer|Message::RestartServer=>{
+                let Some(remote)=self.remote.clone() else{return Task::none()};
+                if self.remote_management{return Task::none();}self.remote_management=true;
+                let restart=matches!(message,Message::RestartServer);
+                Task::perform(async move{if restart{remote.restart().await}else{remote.resume().await}},Message::RemoteManagementFinished)
+            }
+            Message::RemoteManagementFinished(result)=>{self.remote_management=false;if result.is_err(){self.publish(MessageSeverity::Warning,MessageSource::MainWindow,"Server management failed. The previous owner may still be settling; no process was killed.")}else{Task::none()}},
+            Message::RemoteStarted(Ok(remote))=>{
+                let Some(mut updates)=remote.take_updates() else{return Task::none()};self.remote=Some(remote);
+                Task::run(::iced::stream::channel(16,async move|mut output|{while let Some(update)=updates.recv().await{if output.send(Message::RemoteUpdate(update)).await.is_err(){return;}}}),|message|message)
+            }
+            Message::RemoteStarted(Err(_))=>self.publish(MessageSeverity::Warning,MessageSource::MainWindow,"Control server initialization failed. Close and reopen the development probe."),
+            Message::RemoteUpdate(update)=>self.remote_update(update),
+            Message::RemoteAdmitted(sequence,result)=>self.remote_admitted(sequence,result),
+            Message::RemoteResult(Ok(receipt))=>self.remote_complete(receipt),
+            Message::RemoteResult(Err(_))=>self.publish(MessageSeverity::Warning,MessageSource::MainWindow,"The retained result is unavailable. This action will not be repeated automatically."),
             Message::RuntimeStarted(adapter) => {
                 self.adapter = Some(adapter.clone());
                 // A single observer serves every pending GUI request. Overflow
@@ -216,6 +294,7 @@ impl App {
             | Message::MainWindowOpened(_)
             | Message::SettingsWindowOpened(_) => Task::none(),
             Message::WindowClosed(id) if self.main_window == Some(id) => {
+                if let Some(remote)=&self.remote {remote.disconnect();return ::iced::exit();}
                 if let Some(adapter) = self.adapter.clone() {
                     Task::perform(async move { adapter.drain().await }, |_| Message::Drained)
                 } else {
@@ -473,6 +552,14 @@ impl App {
         }
     }
     fn lookup(&self, id: OperationId) -> Task<Message> {
+        if let (Some(remote), Some(snapshot)) = (&self.remote, &self.snapshot) {
+            let remote = remote.clone();
+            let epoch = snapshot.epoch;
+            return Task::perform(
+                async move { remote.operation(epoch, id).await },
+                Message::RemoteResult,
+            );
+        }
         let (Some(adapter), Some(snapshot)) = (&self.adapter, &self.snapshot) else {
             return Task::none();
         };
@@ -530,6 +617,12 @@ impl App {
             }
         }
         self.view_model.update_control_state(&snapshot.control);
+        if self.probe_mode {
+            self.view_model.set_service_available(
+                self.remote.as_ref().is_some_and(|r| r.connected()) && !snapshot.admission_closed,
+            );
+        }
+
         if let StartupState::Blocked(_) | StartupState::RecoveryRequired = snapshot.startup {
             self.settings_status = if snapshot.pairing_recovery.is_some_and(|m| m.repair) {
                 "Interrupted re-pair needs attention. Check this TV and approve a fresh re-pair."
@@ -562,7 +655,7 @@ impl App {
         let (severity, text): (MessageSeverity, String) = match outcome {
             Outcome::Discovered(hosts) => { self.candidates = hosts.iter().map(|c| c.host.clone()).collect(); self.candidate_handles = hosts; (MessageSeverity::Information, "TV discovery finished. Check a TV before pairing.".into()) }
             Outcome::Probed(observation) => {
-                if observation.host.as_str() == self.tv_address { self.observed = Some(observation); }
+                if observation.host.as_str() == self.tv_address { self.observed = Some(*observation); }
                 (MessageSeverity::Information, "Check the TV identity, then confirm Pairing.".into())
             }
             Outcome::Paired(_) => { self.observed = None; (MessageSeverity::Information, "TV paired and saved securely.".into()) }
@@ -689,7 +782,8 @@ impl App {
                 .find(|d| Some(d.id) == s.control.selected_device())
         });
         view::PowerRecovery {
-            available: selected.is_some()
+            available: self.view_model.control_state().service_available
+                && selected.is_some()
                 && self
                     .snapshot
                     .as_ref()
@@ -736,21 +830,34 @@ impl App {
             let configured = devices.iter().any(|d| {
                 Some(d.id) == self.control().selected_device() && d.wake.active_mac().is_some()
             });
-            view::main_window(
+            let content = view::main_window(
                 &self.view_model,
                 self.wake_stage(),
                 configured,
                 self.wake_tick,
                 self.power_recovery(),
-            )
+            );
+            if self.probe_mode {
+                self.server_status_bar(content)
+            } else {
+                content
+            }
         }
     }
 
     fn title(&self, window: window::Id) -> String {
         if self.settings_window == Some(window) {
-            "Samsung TV Remote Settings".to_owned()
+            if self.probe_mode {
+                "Samsung TV Remote Settings — Development probe".to_owned()
+            } else {
+                "Samsung TV Remote Settings".to_owned()
+            }
         } else {
-            "Samsung TV Remote".to_owned()
+            if self.probe_mode {
+                "Samsung TV Remote — Development probe".to_owned()
+            } else {
+                "Samsung TV Remote".to_owned()
+            }
         }
     }
 
@@ -927,6 +1034,18 @@ fn connect_error_message(error: ConnectFlowError) -> &'static str {
     }
 }
 
+pub fn run_probe(config: crate::control_client::background::Config) -> ::iced::Result {
+    ::iced::daemon(
+        move || App::boot_probe(config.clone()),
+        App::update,
+        App::view,
+    )
+    .title(App::title)
+    .theme(dark_theme)
+    .subscription(App::subscription)
+    .run()
+}
+
 pub fn run(services: AppServices) -> ::iced::Result {
     ::iced::daemon(move || App::boot(services.clone()), App::update, App::view)
         .title(App::title)
@@ -959,7 +1078,8 @@ fn settings_window_settings() -> window::Settings {
 
 fn wake_message(stage: WakeStage) -> &'static str {
     match stage {
-        WakeStage::Ready | WakeStage::Connected => "Wake packet sent; TV remote connection is ready.",
+        WakeStage::Ready => "Wake packet sent; TV remote connection is ready.",
+        WakeStage::Connected => "TV remote connection is ready; no Wake packet was sent.",
         WakeStage::Cancelled => "Wake cancelled before sending a packet.",
         WakeStage::CancelledDuringSend => "Wake cancelled during packet send. The packet may have been sent and cannot be recalled.",
         WakeStage::CancelledAfterSend => "Wake cancelled. A packet already sent cannot be recalled.",
@@ -1049,6 +1169,39 @@ mod tests {
             shortcut_for(&Key::Character("1".into()), Modifiers::NONE),
             None
         );
+    }
+
+    #[test]
+    fn development_probe_has_no_local_owner_and_reattach_never_connects_a_tv() {
+        let config = crate::control_client::background::Config {
+            executable: "/synthetic/executable".into(),
+            base: "/synthetic/profile".into(),
+        };
+        let (mut app, _) = App::boot_probe(config);
+        assert!(app.adapter.is_none());
+        assert!(app.probe_mode);
+        assert!(app.launch_connected);
+        app.wake_save_requested = true;
+        app.selection_connect_requested = true;
+        let _ = app.update(Message::RemoteUpdate(
+            crate::control_client::background::Update::Snapshot {
+                snapshot: Box::new(projection(Some(DeviceId::new(1)), 0, 1)),
+                initial: true,
+            },
+        ));
+        assert!(app.adapter.is_none());
+        assert!(app.submitting.is_empty());
+        assert!(!app.wake_save_requested);
+        assert!(!app.selection_connect_requested);
+        let _ = app.update(Message::RemoteUpdate(
+            crate::control_client::background::Update::Status(
+                crate::control_client::background::Status::Waiting {
+                    due: tokio::time::Instant::now() + std::time::Duration::from_secs(1),
+                },
+            ),
+        ));
+        assert!(!app.view_model.control_state().remote_actions_enabled());
+        assert_eq!(app.control().selected_device(), Some(DeviceId::new(1)));
     }
 
     #[test]
@@ -1182,6 +1335,7 @@ mod tests {
             }
         }
         Snapshot {
+            admission_closed: false,
             epoch: Epoch(1),
             revision,
             startup: StartupState::Ready,
@@ -1260,6 +1414,8 @@ mod tests {
             id: OperationId(9),
             metadata: Command::Discover.metadata(Epoch(1)),
             outcome: Some(Outcome::Discovered(Vec::new())),
+            expires_at: None,
+            terminal_state: None,
         };
         let _ = app.complete(receipt.clone());
         assert!(app.view_model.messages().entries().is_empty());
@@ -1269,6 +1425,8 @@ mod tests {
                 id: receipt.id,
                 metadata: receipt.metadata,
                 outcome: None,
+                expires_at: None,
+                terminal_state: None,
             }),
         ));
         let _ = app.update(Message::ServiceResult(receipt.clone()));

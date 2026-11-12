@@ -1,0 +1,454 @@
+P2-M8 final validation — 2026-11-12
+Source/fixture SHA-256: b5bc2688fa097be453ef17bbbe57f412abf0746875fa9cebe29e0a695e6d725a
+Platform: macOS-27.2.1-arm64-arm-64bit-Mach-O
+
+$ rustc --version
+rustc 1.98.0 (88d9e12ae 2026-08-18)
+exit status: 0
+
+$ cargo fmt --all -- --check
+
+exit status: 0
+
+$ cargo clippy --all-targets -- -D warnings
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.13s
+warning: the following packages contain code that will be rejected by a future version of Rust: block v0.1.6
+note: to see what the problems were, use the option `--future-incompat-report`, or run `cargo report future-incompatibilities --id 1`
+exit status: 0
+
+$ cargo test
+   Compiling samsung-tv-remote v1.0.0 (/Volumes/Work_Volume/samsung-tv-remote)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 10.21s
+warning: the following packages contain code that will be rejected by a future version of Rust: block v0.1.6
+note: to see what the problems were, use the option `--future-incompat-report`, or run `cargo report future-incompatibilities --id 1`
+     Running unittests src/lib.rs (target/debug/deps/samsung_tv_remote-f3e05f1347ee635a)
+
+running 109 tests
+test application::control_state::tests::new_state_has_no_selected_tv ... ok
+test application::control_state::tests::no_selection_rejection_preserves_the_requested_target ... ok
+test application::control_state::tests::lifecycle_updates_are_generation_scoped_and_selection_resets_them ... ok
+test application::control_state::tests::confirmed_playback_commands_update_only_the_current_selection ... ok
+test application::remote_request::tests::request_preserves_target_and_action ... ok
+test application::remote_request::tests::rejected_outcome_preserves_request_and_reason ... ok
+test application::control_state::tests::selection_and_clear_advance_the_generation_only_when_identity_changes ... ok
+test application::remote_dispatcher::tests::cancellation_and_observer_reattachment_preserve_terminal_results ... ok
+test application::remote_dispatcher::tests::stale_selection_is_terminal_without_a_write ... ok
+test application::remote_dispatcher::tests::power_is_admitted_only_for_a_connected_session ... ok
+test application::remote_dispatcher::tests::resolves_only_the_current_transport_request ... ok
+test application::control_state::tests::remote_action_admission_checks_each_precondition ... ok
+test application::remote_dispatcher::tests::aborted_write_is_uncertain_and_queued_followup_is_cancelled ... ok
+test application::remote_dispatcher::tests::orders_writes_and_rejects_queue_or_journal_overflow ... ok
+test application::tv_address::tests::rejects_urls_ports_public_and_loopback_targets ... ok
+test application::tv_address::tests::accepts_local_literals_and_valid_dns_hosts ... ok
+test application::tv_address::tests::rejects_any_public_or_changed_dns_answer ... ok
+test application::tv_control_coordinator::tests::uncertain_playback_write_keeps_state_unknown_and_retries_play ... ok
+test application::tv_control_coordinator::tests::stale_session_result_cannot_finish_the_active_request ... ok
+test application::tv_control_coordinator::tests::token_rejection_marks_active_write_uncertain_and_cancels_waiting_work ... ok
+test application::tv_control_coordinator::tests::unknown_playback_sends_play_then_pause_after_a_confirmed_play_write ... ok
+test application::wake_transport::tests::cancelled_permit_never_enters_the_send_closure ... ok
+test application::tv_setup_service::tests::forget_reports_partial_credential_cleanup_and_still_removes_other_records ... ok
+test application::tv_setup_service::tests::failed_trust_cleanup_reports_partial_pairing_without_selecting_candidate ... ok
+test application::tv_setup_service::tests::failed_device_save_removes_new_credentials_and_preserves_prior_selection ... ok
+test application::tv_setup_service::tests::failed_selection_removes_candidate_and_keeps_prior_selection ... ok
+test application::tv_setup_service::tests::trust_failure_rolls_back_keychain_token ... ok
+test application::tv_setup_service::tests::keychain_failure_never_saves_or_selects_candidate ... ok
+test application::tv_setup_service::tests::changed_host_blocks_token_access_before_reconnect ... ok
+test application::tv_setup_service::tests::failed_repair_does_not_overwrite_the_old_token ... ok
+test application::tv_setup_service::tests::reconnect_requires_trust_and_token_before_returning_material ... ok
+test application::tv_setup_service::tests::repair_same_identity_preserves_the_saved_record ... ok
+test application::tv_setup_service::tests::repair_keeps_record_id_when_identity_changes ... ok
+test application::tv_setup_service::tests::failed_repair_preferences_write_restores_old_credentials_and_device ... ok
+test domain::mac_address::tests::normalizes_unicast_addresses ... ok
+test domain::mac_address::tests::rejects_bad_or_non_unicast_addresses ... ok
+test application::wake_transport::tests::packet_contains_six_sync_bytes_and_sixteen_mac_copies ... ok
+test infrastructure::private_files::tests::atomic_write_crash_child ... ok
+test infrastructure::samsung::codec::tests::click_frames_have_the_exact_samsung_key_map ... ok
+test infrastructure::samsung::session::tests::pin_roundtrip_and_debug_redaction ... ok
+test infrastructure::samsung::codec::tests::no_token_connect_is_distinct_from_denial ... ok
+test infrastructure::samsung::codec::tests::event_parser_bounds_and_redacts_pairing_token ... ok
+test infrastructure::samsung::session::tests::changed_certificate_stops_upgrade_before_token_is_sent ... ok
+test infrastructure::samsung::session::tests::fake_events_distinguish_consent_denial_and_token_revocation ... ok
+test infrastructure::samsung::session::tests::fake_events_reject_missing_token_and_malformed_or_oversized_frames ... ok
+test infrastructure::samsung::session::tests::metadata_projection_keeps_only_safe_name_and_model ... ok
+test infrastructure::samsung::session::tests::metadata_rejects_non_success_malformed_and_unsafe_fields ... ok
+test infrastructure::ssdp_discovery::tests::permission_errors_remain_distinct_from_empty_discovery ... ok
+test infrastructure::ssdp_discovery::tests::accepts_case_insensitive_samsung_header_without_trusting_location ... ok
+test infrastructure::ssdp_discovery::tests::ignores_malformed_non_samsung_and_oversized_advertisements ... ok
+test infrastructure::ssdp_discovery::tests::rejects_nonlocal_and_loopback_response_sources ... ok
+test infrastructure::ssdp_discovery::tests::discovers_only_samsung_responses_from_private_sources ... ok
+test infrastructure::wake_udp::tests::directed_broadcast_requires_same_usable_subnet ... ok
+test infrastructure::samsung::session::tests::authorization_ignores_unrelated_frames_and_rejects_closed_streams ... ok
+test presentation::iced::app::tests::keyboard_shortcuts_require_command_and_match_routes ... ok
+test presentation::iced::app::tests::opening_and_closing_settings_preserves_main_navigation_and_message_state ... ok
+test presentation::iced::app::tests::navigation_shortcut_from_settings_does_not_change_main_route ... ok
+test presentation::iced::app::tests::delayed_window_open_event_does_not_restore_closed_settings ... ok
+test presentation::iced::app::tests::opening_settings_is_idempotent_until_the_window_closes ... ok
+test presentation::iced::app::tests::remote_shortcut_from_settings_does_not_emit_a_tv_request ... ok
+test presentation::iced::app::tests::remote_shortcuts_map_to_semantic_actions_only_for_ignored_nonrepeat_keys ... ok
+test presentation::iced::app::tests::settings_sidebar_switches_between_discovery_and_wake_on_lan ... ok
+test presentation::iced::app::tests::windows_use_the_approved_dark_layout_dimensions ... ok
+test presentation::iced::app::tests::development_probe_has_no_local_owner_and_reattach_never_connects_a_tv ... ok
+test presentation::iced::icons::tests::every_icon_is_an_embedded_png ... ok
+test presentation::iced::remote_image::tests::display_coordinates_map_back_to_image_coordinates ... ok
+test presentation::iced::remote_image::tests::every_visible_control_has_a_distinct_hotspot ... ok
+test presentation::iced::remote_image::tests::gaps_and_remote_body_are_not_clickable ... ok
+test presentation::iced::remote_image::tests::no_selected_tv_disables_every_picture_hotspot ... ok
+test presentation::iced::view::tests::action_buttons_distinguish_hover_and_disabled_states ... ok
+test presentation::iced::view::tests::every_primary_destination_has_a_distinct_bitmap_icon ... ok
+test presentation::iced::view::tests::candidate_rows_omit_saved_tvs_and_keep_a_manual_target ... ok
+test infrastructure::samsung::session::tests::token_url_is_secure_and_escapes_untrusted_token_characters ... ok
+test presentation::iced::view::tests::settings_sidebar_labels_keep_readable_contrast_in_every_state ... ok
+test presentation::iced::view::tests::only_the_checked_tv_can_offer_pairing ... ok
+test presentation::iced::view::tests::sidebar_buttons_rest_on_the_rail_and_distinguish_hover_from_selection ... ok
+test infrastructure::preferences::tests::malformed_wake_field_does_not_lose_saved_device_or_selection ... ok
+test presentation::iced::view::tests::wake_choices_unlock_from_their_valid_mac_without_a_saved_tv_selection ... ok
+test presentation::iced::view_model::tests::control_state_enables_only_when_the_application_policy_is_eligible ... ok
+test presentation::iced::view_model::tests::control_state_projects_distinct_lifecycle_labels_and_safe_guidance ... ok
+test presentation::iced::view_model::tests::control_state_projects_safe_selected_device_and_generation ... ok
+test presentation::iced::app::tests::cleanup_remains_actionable_after_partial_forget_removes_selected_record ... ok
+test presentation::iced::view_model::tests::control_state_provides_disabled_reason_for_no_tv ... ok
+test presentation::iced::app::tests::terminal_before_admission_reply_is_recovered_without_duplicate_feedback ... ok
+test application::runtime::tests::queued_authorization_is_rechecked_at_owner_admission ... ok
+test presentation::iced::app::tests::gui_launch_connect_is_explicit_once_and_does_not_select ... ok
+test presentation::iced::app::tests::wake_drafts_survive_resnapshot_and_coalesce_while_storage_is_fenced ... ok
+test application::runtime::tests::dropped_reply_does_not_remove_admission ... ok
+test presentation::iced::view_model::tests::debug_messages_are_retained_but_excluded_from_global_messages ... ok
+test presentation::iced::view_model::tests::disconnected_server_disables_actions_without_erasing_selected_identity ... ok
+test presentation::iced::view_model::tests::feed_bottom_detection_uses_pixel_distance ... ok
+test presentation::iced::view_model::tests::message_feed_evicts_oldest_entry_and_keeps_sequence_order ... ok
+test presentation::iced::view_model::tests::message_feed_follows_only_while_at_bottom ... ok
+test presentation::iced::view_model::tests::message_pane_height_stays_within_usable_bounds ... ok
+test presentation::iced::view_model::tests::new_state_has_no_selected_tv ... ok
+test presentation::iced::view_model::tests::route_selection_changes_only_the_primary_view ... ok
+test server::control_http::io::tests::abandoned_response_writer_has_a_finite_deadline ... ok
+test server::control_http::io::tests::completed_flush_allows_an_idle_stream_to_write_again ... ok
+test infrastructure::samsung::session::tests::matching_certificate_allows_secure_websocket_upgrade ... ok
+test server::control_http::io::tests::partial_progress_cannot_extend_the_flush_deadline ... ok
+test server::control_http::transport::tests::overflow_discards_buffered_events_and_requests_an_atomic_resnapshot ... ok
+test infrastructure::samsung::session::tests::silent_fake_tv_times_out_without_accepting_pairing ... ok
+test infrastructure::samsung::session::tests::fake_writer_distinguishes_flushed_and_ambiguous_clicks ... ok
+test infrastructure::preferences::tests::wake_settings_roundtrip_and_legacy_records_remain_selected ... ok
+test infrastructure::preferences::tests::obsolete_verified_actions_are_ignored_and_removed_on_save ... ok
+test server::bootstrap::socket::tests::public_socket_appears_only_after_mode_validation_and_a_live_socket_is_never_replaced ... ok
+test infrastructure::preferences::tests::device_and_trust_records_roundtrip_without_a_token_in_preferences ... ok
+test server::launch::tests::explicit_stop_failure_and_mismatched_ack_are_not_lost_ack_success ... ok
+test infrastructure::private_files::tests::crashes_at_each_atomic_write_boundary_keep_only_complete_authoritative_markers ... ok
+
+test result: ok. 109 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.20s
+
+     Running unittests src/main.rs (target/debug/deps/samsung_tv_remote-56eb09dc02531f60)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/control_client.rs (target/debug/deps/control_client-93efdbef8281fe25)
+
+running 4 tests
+test sleep_does_not_overlap_attempts_or_create_catch_up_bursts ... ok
+test flapping_preserves_backoff_and_healthy_stream_resets_it ... ok
+test blocked_states_require_the_matching_resolution_and_exit_is_terminal ... ok
+test immediate_attempt_then_exponential_delays_repeat_the_one_hour_cap ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/control_client_rotation.rs (target/debug/deps/control_client_rotation-bc80b35a9b043fd4)
+
+running 1 test
+test gui_actor_rotates_to_a_fresh_snapshot_then_blocks_on_revocation_without_replaying_any_tv_effect ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 10.57s
+
+     Running tests/control_documentation.rs (target/debug/deps/control_documentation-1d234b6c2f9082bc)
+
+running 3 tests
+test published_json_request_and_receipt_examples_use_the_actual_parser ... ok
+test corpus_results_preserve_full_epoch_scoped_handles_lossless_counters_and_empty_first_use ... ok
+test proposed_mcp_mutation_arguments_parse_as_the_corresponding_http_commands ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+
+     Running tests/control_http.rs (target/debug/deps/control_http-0156365a250e807b)
+
+running 26 tests
+test protected_readiness_unknown_routes_and_gui_management_have_no_tv_effects ... ok
+test atomic_events_are_consecutive_private_and_rotation_closes_old_streams ... ok
+test every_gateway_and_discovery_failure_is_a_retained_http_result_without_other_effects ... ok
+test raw_framing_authority_and_streamed_body_limits_prevent_admission ... ok
+test durable_stop_acknowledges_marker_before_gracefully_closing_http ... ok
+test queries_and_management_keep_reserved_capacity_under_slow_mutation_load ... ok
+test stale_epoch_reports_current_and_old_epoch_lookup_never_replays ... ok
+test every_setup_boundary_error_has_a_retained_http_fixture_and_no_store_commit ... ok
+test stalled_large_responses_keep_their_query_reservations_until_connection_close ... ok
+test losing_an_admitted_http_reply_does_not_cancel_or_repeat_the_remote_write ... ok
+test policy_rejections_are_retained_while_ingress_confirmation_failures_create_no_record ... ok
+test drain_retains_storage_uncertainty_and_pending_operation_cancellation_over_http ... ok
+test owner_effect_and_remote_fifo_overload_are_retained_without_dispatching_rejected_work ... ok
+test guarded_recovery_routes_compensate_exact_transactions_without_tv_io ... ok
+test storage_deadline_and_supervisor_failure_are_retained_without_replaying_effects ... ok
+test candidate_authority_is_private_and_repair_preserves_the_device_id ... ok
+test generation_changes_cancel_late_pairing_and_connect_without_adopting_or_saving_them ... ok
+test complete_fake_setup_remote_deduplication_two_clients_and_forget_over_http ... ok
+test maximum_profile_streams_are_bounded_and_subscriber_limits_preserve_queries ... ok
+test wake_cancellation_over_http_preserves_packet_facts_and_drops_late_connections ... ok
+test pairing_storage_faults_over_http_compensate_or_expose_the_exact_recovery_marker ... ok
+test failed_selection_wake_edits_and_partial_forget_retain_http_facts_without_tv_io ... ok
+test remote_and_wake_terminal_facts_survive_http_lookup_without_retry ... ok
+test reconnect_material_and_rotated_credential_failures_are_private_retained_http_results ... ok
+test pairing_and_connect_session_failures_return_their_http_status_without_storage_or_remote_effects ... ok
+test incomplete_header_saturation_expires_and_shutdown_has_a_finite_deadline ... ok
+
+test result: ok. 26 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 11.04s
+
+     Running tests/control_http_heap.rs (target/debug/deps/control_http_heap-54842bb7bdbc70ad)
+
+running 1 test
+test full_profile_http_and_eight_subscribers_have_a_measured_heap_bound ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.78s
+
+     Running tests/control_response.rs (target/debug/deps/control_response-93701ad65affc8a8)
+
+running 6 tests
+test wake_packet_facts_survive_cancellation_and_do_not_claim_physical_power ... ok
+test pending_terminal_and_retained_errors_preserve_metadata_without_debug_output ... ok
+test native_setup_projections_reject_cross_operation_handles_and_oversized_metadata ... ok
+test nested_setup_session_policy_and_service_failures_have_explicit_codes ... ok
+test every_top_level_outcome_has_a_safe_terminal_representation ... ok
+test maximum_profile_snapshot_and_sse_fit_the_bounded_output_budget ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.06s
+
+     Running tests/control_wire.rs (target/debug/deps/control_wire-40478052a72397e9)
+
+running 4 tests
+test identifiers_are_canonical_kind_checked_and_lossless ... ok
+test counters_reject_rounding_overflow_and_noncanonical_input ... ok
+test invalid_envelopes_and_confirmations_cannot_reach_admission ... ok
+test every_mutation_route_preserves_guards_and_fits_the_body_budget ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/development_profile.rs (target/debug/deps/development_profile-ca1551ab04af01c1)
+
+running 3 tests
+test isolated_store_rejects_symlinked_profile_records_without_repair_or_effects ... ok
+test private_adapters_reject_untagged_wrong_namespace_and_duplicate_envelopes ... ok
+test isolated_profile_restarts_with_synthetic_credentials_and_zero_startup_effects ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.13s
+
+     Running tests/forget_recovery.rs (target/debug/deps/forget_recovery-f9f6ece27182963b)
+
+running 7 tests
+test file_journal_rejects_transaction_replacement_regression_and_premature_removal ... ok
+test adapter_without_journal_support_blocks_instead_of_assuming_no_recovery ... ok
+test corrupt_or_unrecognized_journal_blocks_before_any_credential_access ... ok
+test forgetting_an_unselected_record_preserves_selection_and_generation ... ok
+test partial_forget_blocks_across_restart_and_retries_only_on_explicit_recovery ... ok
+test forget_validates_confirmation_and_revision_then_publishes_durable_removal ... ok
+test every_forget_journal_boundary_recovers_without_implicit_credential_access ... ok
+
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.60s
+
+     Running tests/headless_runtime.rs (target/debug/deps/headless_runtime-df7058e38c4e8085)
+
+running 35 tests
+test corruption_blocks_admission_visibly_and_retains_rejection ... ok
+test drain_reports_unresolved_restore_without_claiming_a_ready_profile ... ok
+test discovery_progress_survives_client_detach_and_duplicate_has_one_effect ... ok
+test duplicates_precede_capacity_and_changed_payload_conflicts ... ok
+test drain_deadline_preserves_running_effect_and_closes_admission ... ok
+test disconnected_power_reachable_is_ready_without_key_or_packet ... ok
+test ambiguous_selection_and_configuration_failures_reconcile_actual_durable_facts ... ok
+test cancelling_wake_during_reconnect_clears_connecting_projection ... ok
+test client_candidates_expire_without_extending_retained_discovery_results ... ok
+test drain_reports_blocking_storage_and_keeps_supervision_until_settlement ... ok
+test cancelled_connection_during_configuration_commit_clears_connecting_projection ... ok
+test connection_storage_deadline_clears_connecting_before_worker_returns ... ok
+test connection_supervisor_failure_clears_connecting_projection ... ok
+test effect_panic_settles_original_reservation_and_owner_survives ... ok
+test idle_drain_settles_without_waiting_for_deadline ... ok
+test drain_retains_uncertain_writer_and_not_sent_waiters_without_replay ... ok
+test restore_preserves_duplicate_hosts_and_generation_zero_without_tv_io ... ok
+test revocation_between_middleware_and_owner_prevents_admission ... ok
+test operation_id_lookup_is_client_scoped_retained_and_epoch_bound ... ok
+test subscribers_and_effects_have_finite_caps_and_drain_closes_clients ... ok
+test private_snapshot_references_and_terminal_display_expiry_are_stable ... ok
+test subscription_is_atomic_overflow_closes_and_client_results_are_private ... ok
+test prepared_connection_cannot_install_inside_an_uncommitted_selection_fence ... ok
+test headless_session_pumps_remote_and_inference_without_gui_polling ... ok
+test timed_out_blocking_worker_keeps_fence_and_queries_responsive ... ok
+test terminal_retention_is_monotonic_and_restart_is_explicit ... ok
+test wake_configuration_uses_durable_revision_and_retains_stale_rejection ... ok
+test two_clients_cas_selection_and_same_id_reselection_changes_generation ... ok
+test successful_preference_writes_still_validate_the_authoritative_profile ... ok
+test wake_cancel_before_final_send_and_send_deadline_revoke_the_packet_permit ... ok
+test discovery_deadline_releases_effect_capacity ... ok
+test disconnected_power_offline_sends_exactly_one_packet_and_cancel_preserves_facts ... ok
+test wake_captures_configuration_and_edits_do_not_cancel_or_replace_its_packet ... ok
+test completions_and_queries_progress_while_client_ingress_is_saturated ... ok
+test per_client_retention_quota_deduplicates_and_leaves_space_for_another_identity ... ok
+
+test result: ok. 35 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.16s
+
+     Running tests/integration.rs (target/debug/deps/integration-1cb113bca5027c3e)
+
+running 17 tests
+test device_id::device_ids_can_be_copied_into_requests ... ok
+test device_id::device_id_formats_as_a_local_record_key ... ok
+test device_id::device_ids_can_be_found_in_a_hash_set ... ok
+test device_id::device_display_exposes_its_label_by_borrow ... ok
+test device_id::equal_device_ids_compare_equal_and_distinct_ids_do_not ... ok
+test device_id::device_display_preserves_its_typed_id ... ok
+test device_id::equal_device_ids_address_the_same_map_entry ... ok
+test device_id::generated_device_ids_roundtrip_as_local_record_keys ... ok
+test remote_action::equal_actions_compare_equal_and_distinct_actions_do_not ... ok
+test remote_action::remote_action_covers_every_rendered_button_intent ... ok
+test remote_action::remote_actions_can_be_copied_into_requests ... ok
+test remote_action::remote_actions_can_be_found_in_a_hash_set ... ok
+test remote_request::requests_with_different_actions_are_not_equal ... ok
+test remote_request::requests_with_different_targets_are_not_equal ... ok
+test remote_request::send_remote_action_preserves_each_semantic_action ... ok
+test remote_request::send_remote_action_preserves_its_target_generation_and_action ... ok
+test remote_request::unselected_state_rejects_each_request_without_changing_its_target ... ok
+
+test result: ok. 17 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/m6_handoff.rs (target/debug/deps/m6_handoff-def86f6f48d5c514)
+
+running 6 tests
+test staging_rejects_wrong_number_of_explicit_paths ... ok
+test missing_real_resource_seal_reproduces_reported_failure ... ok
+test incomplete_newest_bundle_fails_with_rebuild_guidance ... ok
+test real_staging_preserves_fixture_signatures_and_fills_runbook_path ... ok
+test successful_probe_builds_publish_the_verified_path ... ok
+test failed_probe_builds_do_not_publish_or_leave_incomplete_candidates ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.83s
+
+     Running tests/m6_keychain_input.rs (target/debug/deps/m6_keychain_input-eb660f43278b2331)
+
+running 2 tests
+test runbook_stops_before_read_when_preflight_fails ... ok
+test probe_accepts_persisted_device_ids_and_rejects_unsafe_inputs_before_keychain ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.59s
+
+     Running tests/pairing_runtime.rs (target/debug/deps/pairing_runtime-0fed61d59c107c93)
+
+running 10 tests
+test observation_is_rechecked_after_approval_before_any_store_commit ... ok
+test observations_are_client_bound_exact_expiring_and_bounded_independently_of_result_retention ... ok
+test journal_refuses_wrong_transaction_stage_regression_and_conflicting_forget ... ok
+test timed_out_pair_commit_stays_fenced_through_drain_and_late_success_never_installs_a_session ... ok
+test late_approval_and_token_rotation_cannot_mutate_a_new_selection ... ok
+test reconnect_rotation_is_journaled_and_preserves_selected_generation ... ok
+test pairing_commit_settles_concurrent_wake_and_revokes_pending_packet ... ok
+test first_pair_and_repair_commit_before_generation_and_adopt_only_the_committed_session ... ok
+test every_first_pair_compensation_boundary_resumes_only_incomplete_steps ... ok
+test every_pairing_and_repair_commit_boundary_blocks_on_restart_and_recovers_explicitly ... ok
+
+test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 4.35s
+
+     Running tests/runtime_limits.rs (target/debug/deps/runtime_limits-ea638b7b433cbe94)
+
+running 1 test
+test production_saturation_memory_and_stage_timings ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.77s
+
+     Running tests/server_access.rs (target/debug/deps/server_access-2bb8df58cf33278d)
+
+running 3 tests
+test rotation_revokes_old_authority_and_streams_preserving_identity ... ok
+test every_path_uses_literal_authority_origin_and_peer_policy ... ok
+test invalid_credentials_have_a_bounded_attempt_window ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/server_bootstrap.rs (target/debug/deps/server_bootstrap-337f09b8f4f9c3c8)
+
+running 9 tests
+test peer_and_credential_gates_are_explicit_and_frames_are_bounded ... ok
+test unconsumed_challenges_replayed_nonces_and_revoked_identities_fail_closed ... ok
+test probe_expiry_does_not_renew ... ok
+test listener_proof_precedes_reusable_credentials_and_probe_is_one_use ... ok
+test listener_proof_binds_every_context_field_and_never_accepts_a_changed_proof ... ok
+test rotation_during_a_challenge_requires_a_fresh_exchange_while_revocation_stays_denied ... ok
+test occupied_http_listener_never_receives_a_reusable_credential ... ok
+test nonce_capacity_rejects_new_exchanges_until_expiry ... ok
+test proved_nonserving_listener_is_transient_but_a_false_proof_remains_untrusted ... ok
+
+test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.05s
+
+     Running tests/server_lifecycle.rs (target/debug/deps/server_lifecycle-a1bc12aeb26e58c7)
+
+running 8 tests
+test completed_runtime_retains_ownership_until_composition_has_closed_its_listeners ... ok
+test stop_fences_before_persistence_retains_failed_key_and_requires_new_intent ... ok
+test lost_stop_reply_still_leaves_durable_marker_and_prevents_ordinary_start ... ok
+test signal_drain_keeps_profile_lock_until_late_blocking_restore_settles ... ok
+test unsafe_paths_files_and_locks_are_rejected_without_repair ... ok
+test runtime_ownership_and_atomic_metadata_survive_reopen ... ok
+test durable_stop_metadata_is_strict_and_never_contains_credentials ... ok
+test concurrent_first_lock_creation_and_atomic_reads_keep_one_owner ... ok
+
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.04s
+
+     Running tests/server_process.rs (target/debug/deps/server_process-053a950ded574a55)
+
+running 11 tests
+test executable_modes_select_the_gui_probe_before_any_local_adapter ... ok
+test detached_spawn_uses_a_new_session_and_inherits_only_declared_descriptors ... ok
+test explicit_resume_waits_for_profile_ownership_before_clearing_stop ... ok
+test stop_racing_ordinary_start_preserves_the_marker_and_never_creates_a_new_epoch ... ok
+test termination_signal_models_logout_without_an_intentional_stop_or_implicit_tv_reconnect ... ok
+test different_profile_bindings_never_attach_to_another_profiles_occupied_endpoint ... ok
+test simultaneous_launches_attach_to_one_owner_and_keep_the_endpoint_stable ... ok
+test incompatible_build_requires_explicit_restart_and_never_replaces_the_owner ... ok
+test occupied_endpoint_and_corrupt_manifest_fail_closed_without_reallocation ... ok
+test gui_client_reattaches_after_process_outage_without_replaying_setup_connect_or_action ... ok
+test detached_parent_exit_sticky_stop_explicit_resume_and_fake_pairing_survive_restart ... ok
+
+test result: ok. 11 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 34.77s
+
+   Doc-tests samsung_tv_remote
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+exit status: 0
+
+$ cargo test --test control_http_heap -- --nocapture
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.13s
+warning: the following packages contain code that will be rejected by a future version of Rust: block v0.1.6
+note: to see what the problems were, use the option `--future-incompat-report`, or run `cargo report future-incompatibilities --id 1`
+     Running tests/control_http_heap.rs (target/debug/deps/control_http_heap-54842bb7bdbc70ad)
+
+running 1 test
+M8 HTTP heap: peak=55838892 bytes; disk=1953781; JSON=2032121; SSE=2032151; eight SSE + eight queries=578 ms
+test full_profile_http_and_eight_subscribers_have_a_measured_heap_bound ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.66s
+exit status: 0
+
+$ python3 scripts/measure_mcp_corpus.py
+MCP context proxy: ceil(UTF-8 bytes / 4), compact JSON; NOT Claude tokens
+catalog: compact 15 tools / 2053 proxy tokens
+catalog: one-key-per-tool 28 tools / 3636 proxy tokens
+server instruction: 83 proxy tokens
+inspect_selected: calls=2 tool-search-on=446 all-upfront=2383 args+single-results=131 structured+text-extra=116
+send_remote: calls=3 tool-search-on=883 all-upfront=2567 args+single-results=256 structured+text-extra=175
+wake: calls=3 tool-search-on=834 all-upfront=2568 args+single-results=254 structured+text-extra=178
+discover_probe_pair: calls=5 tool-search-on=1614 all-upfront=3036 args+single-results=561 structured+text-extra=339
+forget: calls=4 tool-search-on=1121 all-upfront=2763 args+single-results=366 structured+text-extra=261
+stale_selection: calls=2 tool-search-on=629 all-upfront=2452 args+single-results=185 structured+text-extra=131
+lost_uncertain: calls=3 tool-search-on=891 all-upfront=2575 args+single-results=260 structured+text-extra=179
+fresh_profile: calls=1 tool-search-on=229 all-upfront=2231 args+single-results=48 structured+text-extra=47
+recover_forget: calls=3 tool-search-on=889 all-upfront=2610 args+single-results=286 structured+text-extra=188
+exit status: 0
+
+$ git diff --check
+
+exit status: 0

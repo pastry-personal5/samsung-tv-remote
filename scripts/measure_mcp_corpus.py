@@ -7,6 +7,7 @@ the estimate with model-visible counts in the installed Claude Code target.
 
 import json
 import math
+import sys
 from pathlib import Path
 
 
@@ -33,20 +34,18 @@ def schema(tool):
         name = field.removesuffix("?").split(":", 1)[0]
         if name == "action":
             properties[name] = {"type": "string", "enum": list(ACTIONS)}
-        elif name in ("selection_generation", "expected_generation", "expected_config_revision", "wait_seconds"):
-            properties[name] = {"type": "integer", "minimum": 0}
-            if name == "wait_seconds":
-                properties[name]["maximum"] = 10
-        elif name == "confirmed_fingerprint":
+        elif name in ("selection_generation", "expected_generation", "expected_config_revision"):
+            properties[name] = {"type": "string", "pattern": "^(0|[1-9][0-9]{0,19})$", "maxLength": 20}
+        elif name == "wait_seconds":
+            properties[name] = {"type": "integer", "minimum": 0, "maximum": 10}
+        elif name in {"fingerprint", "confirm_fingerprint"}:
             properties[name] = {"type": "string", "pattern": "^[0-9a-f]{64}$"}
         elif name == "label":
             properties[name] = {"type": "string", "minLength": 1, "maxLength": 80}
-        elif name in {"wired", "wifi"}:
+        elif name in {"wired_mac", "wifi_mac"}:
             properties[name] = {"type": ["string", "null"], "pattern": "^([0-9a-f]{2}:){5}[0-9a-f]{2}$"}
-        elif name == "active":
-            properties[name] = {"enum": ["wired", "wifi", None]}
-        elif name in {"candidate_id", "observation_id"}:
-            properties[name] = {"type": "string", "minLength": 1, "maxLength": 64}
+        elif name == "active_interface":
+            properties[name] = {"enum": ["Wired", "WiFi", None]}
         elif name.endswith("_id") or name in {"server_epoch", "operation_key", "recovery_transaction"}:
             properties[name] = {"type": "string", "format": "uuid"}
         else:
@@ -58,9 +57,7 @@ def schema(tool):
         "additionalProperties": False,
     }
     alternatives = {
-        "probe_tv": ("candidate_id", "host"),
         "get_operation": ("operation_id", "operation_key"),
-        "forget_tv": ("expected_config_revision", "recovery_transaction"),
     }
     if tool["name"] in alternatives:
         first, second = alternatives[tool["name"]]
@@ -80,11 +77,11 @@ def validate(corpus):
         fields = {field.removesuffix("?").split(":", 1)[0] for field in tool["fields"]}
         if name not in reads:
             assert {"server_epoch", "operation_key"} <= fields, name
-        if name in {"connect_tv", "remote_action", "wake_tv"}:
+        if name in {"connect_tv", "remote_action", "wake_tv", "cancel_wake", "set_wake"}:
             assert {"device_id", "selection_generation"} <= fields, name
         if name == "pair_tv":
             assert {
-                "attempt_id", "observation_id", "confirmed_fingerprint",
+                "host", "attempt_id", "observation_id", "fingerprint", "confirm_fingerprint",
                 "selection_generation",
             } <= fields, name
             assert "selection_generation" in tool["fields"], "Pairing generation is optional"
@@ -104,25 +101,35 @@ def sample_args(tool):
         fields.append("candidate_id")
     if tool["name"] == "get_operation":
         fields.append("operation_id")
-    if tool["name"] == "forget_tv":
-        fields.append("expected_config_revision")
     sample = {}
     for field in fields:
         name = field.split(":", 1)[0]
-        if name.endswith("generation") or name.endswith("revision") or name == "wait_seconds":
+        if name.endswith("generation") or name.endswith("revision"):
+            sample[name] = "7"
+        elif name == "wait_seconds":
             sample[name] = 7
-        elif name == "confirmed_fingerprint":
+        elif name in {"fingerprint", "confirm_fingerprint"}:
             sample[name] = "0123456789abcdef" * 4
         elif name == "action":
             sample[name] = "VolumeUp"
         elif name == "label":
             sample[name] = "Living room"
         elif name == "candidate_id":
-            sample[name] = "candidate-1"
-        elif name == "observation_id":
-            sample[name] = "obs-1"
-        elif name in {"server_epoch", "operation_key", "recovery_transaction"} or name.endswith("_id"):
+            sample[name] = "53545201-0200-0000-0000-000000000001"
+        elif name in {"attempt_id", "observation_id"}:
+            sample[name] = "53545201-0100-0000-0000-000000000002"
+        elif name == "operation_id":
+            sample[name] = "53545201-0100-0000-0000-000000000003"
+        elif name == "server_epoch":
+            sample[name] = "e1111111-1111-4111-8111-111111111111"
+        elif name in {"transaction_id", "recovery_transaction_id"}:
+            sample[name] = "a5555555-5555-4555-8555-555555555555"
+        elif name == "operation_key":
             sample[name] = "a2222222-2222-4222-8222-222222222222"
+        elif name.endswith("_id"):
+            sample[name] = "d3333333-3333-4333-8333-333333333333"
+        elif name == "host":
+            sample[name] = "synthetic-tv.invalid"
         else:
             sample[name] = "sample"
     return sample
@@ -132,6 +139,11 @@ def main():
     corpus = json.loads(CORPUS.read_text())
     validate(corpus)
     compact_tools = [schema(tool) for tool in corpus["tools"]]
+    if sys.argv[1:] == ["--wire-fixtures"]:
+        print(compact({tool["name"]: {"schema": schema(tool)["inputSchema"], "arguments": sample_args(tool)} for tool in corpus["tools"]}))
+        return
+    if sys.argv[1:]:
+        raise SystemExit("usage: measure_mcp_corpus.py [--wire-fixtures]")
     remote = next(tool for tool in compact_tools if tool["name"] == "remote_action")
     full_tools = [tool for tool in compact_tools if tool["name"] != "remote_action"]
     for action in ACTIONS:
