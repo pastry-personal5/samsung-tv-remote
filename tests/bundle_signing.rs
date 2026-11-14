@@ -96,6 +96,18 @@ esac
             fs::read_to_string(&binary).unwrap(),
             if accepted { "new" } else { "approved-old" }
         );
+        if accepted {
+            let version = Command::new("/usr/bin/plutil")
+                .args(["-extract", "CFBundleShortVersionString", "raw", "-o", "-"])
+                .arg(bundle.join("Contents/Info.plist"))
+                .output()
+                .unwrap();
+            assert!(version.status.success());
+            assert_eq!(
+                String::from_utf8(version.stdout).unwrap().trim(),
+                env!("CARGO_PKG_VERSION")
+            );
+        }
         assert!(!fs::read_dir(root.path().join("target"))
             .unwrap()
             .any(|entry| entry

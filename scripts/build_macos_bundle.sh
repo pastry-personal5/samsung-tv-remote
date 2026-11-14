@@ -70,8 +70,8 @@ cat > "$contents/Info.plist" <<'PLIST'
     <key>CFBundleInfoDictionaryVersion</key><string>6.0</string>
     <key>CFBundleName</key><string>Samsung TV Remote</string>
     <key>CFBundlePackageType</key><string>APPL</string>
-    <key>CFBundleShortVersionString</key><string>1.0.0</string>
-    <key>CFBundleVersion</key><string>2</string>
+    <key>CFBundleShortVersionString</key><string>2.0.0</string>
+    <key>CFBundleVersion</key><string>3</string>
     <key>NSLocalNetworkUsageDescription</key>
     <string>Connect to a TV on your local network for pairing, waking, and remote control.</string>
 </dict>

@@ -3864,7 +3864,7 @@ dependencies = [
 
 [[package]]
 name = "samsung-tv-remote"
-version = "1.0.0"
+version = "2.0.0"
 dependencies = [
  "base64",
  "bytes",

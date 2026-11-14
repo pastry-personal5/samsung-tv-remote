@@ -41,11 +41,15 @@ Current references:
   [native runbook](phase-2/milestone-11-native-runbook.md) track execution.
 - [Phase 2 unattended validation](phase-2/automated-validation.md) — checks
   that run without a physical TV or human interaction, added coverage and limits.
+- [Phase 2 pending acceptance tests](phase-2/pending-acceptance.md) — unfinished
+  automated, signed-native, installed-client, accessibility and physical-TV gates
+  for Version v2.0.0.
 - [P2-M6 human test runbook](phase-2/milestone-06-human-runbook.md) — commands
   for the isolated macOS account and remaining platform checks.
 - [Control API Server internals](phase-2/control-server-internals.md) — planned
   server state owner, effect boundaries, recovery, and verification.
-- [Version v1.0.0 release note](releases/v1.0.0.md).
+- [Version v2.0.0 release note](releases/v2.0.0.md).
+- [Version v1.0.0 release note](releases/v1.0.0.md) — previous release.
 
 [Research](research/) contains open proposals and future-feature findings.
 [Archive](archive/) contains completed milestone plans, superseded designs, and

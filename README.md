@@ -13,7 +13,7 @@ The app supports discovery or manual address entry, certificate checking,
 TV-approved pairing, saved-TV reconnect, remote keys, and Wake-on-LAN. Power,
 Remote, and Settings are functional.
 
-Release: [v1.0.0](docs/releases/v1.0.0.md).
+Release notes: [Version v2.0.0](docs/releases/v2.0.0.md).
 
 ## Why it's super-fast
 
