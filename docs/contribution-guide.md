@@ -208,6 +208,11 @@ cargo test --test control_http
 They require permission to bind `127.0.0.1` in a sandboxed environment; they
 contact no TV or LAN host. Process fixtures also spawn the same executable;
 the descriptor/session fixture compiles a small C child with the system `cc`.
+`cargo test --test tv_fixture` runs the synthetic TLS/WebSocket fixture's
+Python self-checks (also included in `cargo test`), using Python 3 and
+`/usr/bin/openssl` with disposable certificates and an ephemeral loopback port.
+See the [unattended validation inventory](phase-2/automated-validation.md)
+for Phase 2 coverage and remaining native acceptance.
 
 Build and exercise the isolated M8 server using an existing absolute parent:
 

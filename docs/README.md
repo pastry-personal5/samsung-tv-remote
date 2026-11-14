@@ -39,6 +39,8 @@ Current references:
   The [implementation ledger](phase-2/milestone-11-implementation.md),
   [acceptance review](phase-2/milestone-11-review.md) and
   [native runbook](phase-2/milestone-11-native-runbook.md) track execution.
+- [Phase 2 unattended validation](phase-2/automated-validation.md) — checks
+  that run without a physical TV or human interaction, added coverage and limits.
 - [P2-M6 human test runbook](phase-2/milestone-06-human-runbook.md) — commands
   for the isolated macOS account and remaining platform checks.
 - [Control API Server internals](phase-2/control-server-internals.md) — planned

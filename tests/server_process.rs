@@ -207,6 +207,118 @@ async fn removal_disconnect_then_stop_preserves_disable_across_reopen_and_config
 }
 
 #[tokio::test]
+async fn crash_after_durable_disable_keeps_leftover_entry_inert_until_explicit_repair() {
+    use samsung_tv_remote::server::mcp::{
+        client_config,
+        connection::{Cause, Connection},
+    };
+    use samsung_tv_remote::server::profile::Profile;
+
+    let fixture = Fixture::new();
+    let connection = Connection {
+        profile: Profile::development(&fixture.base()).unwrap(),
+        executable: PathBuf::from(BINARY),
+        configuration: fixture.base().join(".claude.json"),
+    };
+    let connect_key = uuid::Uuid::new_v4().to_string();
+    let entry = connection
+        .connect(0, &connect_key, None)
+        .await
+        .unwrap()
+        .entry
+        .unwrap();
+    let base = fixture.base();
+    let mut child = DirectChild(
+        Command::new(BINARY)
+            .arg("--server")
+            .arg("--fake-profile")
+            .arg(&base)
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .unwrap(),
+    );
+    let directory = RuntimeDirectory::open(&base.join("m8-fake-v1")).unwrap();
+    tokio::time::timeout(Duration::from_secs(10), async {
+        loop {
+            assert!(
+                child.0.try_wait().unwrap().is_none(),
+                "fixture owner exited during startup"
+            );
+            if matches!(directory.lock(), Err(FileError::Locked)) {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .unwrap();
+    let client = launch::Launcher::development(&base)
+        .unwrap()
+        .start(Path::new(BINARY), Role::Gui)
+        .await
+        .unwrap();
+    let before = state(&client).await;
+    let old_headers = headers_output(&fixture, entry.url());
+    assert!(old_headers.status.success());
+
+    // Disconnect commits revocation before editing client configuration.
+    // Kill the isolated owner at that durable boundary, retaining the entry.
+    let disconnect_key = uuid::Uuid::new_v4().to_string();
+    let disabled = mcp_management(&fixture, &["disable", "1", &disconnect_key]);
+    assert_eq!(disabled["generation"], "2");
+    assert_eq!(disabled["enabled"], false);
+    child.0.kill().unwrap();
+    child.0.wait().unwrap();
+    fixture.owner_settled();
+    assert!(client_config::inspect(&connection.configuration).unwrap() == Some(entry.value()));
+    let denied = headers_output(&fixture, entry.url());
+    assert!(!denied.status.success());
+    assert!(denied.stdout.is_empty());
+    assert_eq!(
+        serde_json::from_slice::<Value>(&denied.stderr).unwrap()["error"],
+        "mcp_not_enrolled"
+    );
+    assert_eq!(
+        mcp_management(&fixture, &["status"])["server_running"],
+        false
+    );
+
+    // A delayed retry of the original Connect cannot regrant after restart.
+    let stale = connection.connect(0, &connect_key, None).await.unwrap_err();
+    assert_eq!(stale.cause, Cause::StaleGeneration);
+    assert_eq!(
+        stale.progress.configuration,
+        samsung_tv_remote::server::mcp::connection::Configuration::Unchanged
+    );
+    fixture.run("--server-start");
+    let after = state(&fixture.client().await).await;
+    assert_ne!(after["server_epoch"], before["server_epoch"]);
+    assert_eq!(mcp_management(&fixture, &["status"])["enabled"], false);
+    assert!(!headers_output(&fixture, entry.url()).status.success());
+
+    // Repeating the lost Disconnect completes only entry removal. Recovery
+    // then requires a fresh explicit Connect, producing a different grant.
+    connection
+        .disconnect(1, &disconnect_key, entry)
+        .await
+        .unwrap();
+    assert!(client_config::inspect(&connection.configuration)
+        .unwrap()
+        .is_none());
+    let repaired = connection
+        .connect(2, &uuid::Uuid::new_v4().to_string(), None)
+        .await
+        .unwrap();
+    let new_headers = headers_output(&fixture, repaired.entry.unwrap().url());
+    assert!(new_headers.status.success());
+    // Never print credential-bearing output, including in assertion failures.
+    assert!(old_headers.stdout != new_headers.stdout);
+    assert_eq!(mcp_management(&fixture, &["status"])["generation"], "3");
+}
+
+#[tokio::test]
 async fn concurrent_header_helpers_cold_start_one_owner_and_reuse_one_mcp_bearer() {
     let fixture = Fixture::new();
     let prepared = mcp_management(&fixture, &["prepare"]);

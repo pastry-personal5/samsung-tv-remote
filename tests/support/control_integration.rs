@@ -29,6 +29,125 @@ fn intent(state: &Value, command: Command) -> Intent {
 }
 
 #[tokio::test]
+async fn mixed_client_load_preserves_recovery_events_management_and_cancelled_capacity() {
+    use tokio::io::AsyncWriteExt;
+
+    let h = Harness::new().await;
+    let state = h.state().await;
+    h.effects.probe_wait.store(true, Ordering::SeqCst);
+    let key = uuid::Uuid::new_v4().to_string();
+    let pending = h
+        .tool(
+            2,
+            "probe_tv",
+            json!({"server_epoch":state["server_epoch"],
+        "operation_key":key,"host":"synthetic.invalid"}),
+        )
+        .await;
+    assert_eq!(pending["state"], "pending");
+    let response = h.response(1, "GET", "/v1/events", Value::Null).await;
+    let mut events = Events {
+        body: response.into_body(),
+        buffer: Vec::new(),
+    };
+    assert_eq!(events.next().await.0, "snapshot");
+
+    // Both roles exhaust their mutation reservations with incomplete bodies.
+    // Observe admission before checking reserved read/management capacity.
+    let mut stalled = Vec::new();
+    for principal in [1, 2] {
+        for _ in 0..MAX_MUTATIONS_PER_CLIENT {
+            let mut socket = TcpStream::connect((std::net::Ipv4Addr::LOCALHOST, h.port))
+                .await
+                .unwrap();
+            socket.write_all(format!("POST /v1/discoveries HTTP/1.1\r\nHost: 127.0.0.1:{}\r\nAuthorization: Bearer {}\r\nContent-Type: application/json\r\nContent-Length: 1000\r\n\r\n{{", h.port, format!("{principal:02x}").repeat(32)).as_bytes()).await.unwrap();
+            stalled.push(socket);
+        }
+        tokio::time::timeout(Duration::from_secs(3), async {
+            loop {
+                let status = h
+                    .json(principal, "POST", "/v1/discoveries", json!({}))
+                    .await
+                    .0;
+                if status == 429 {
+                    break;
+                }
+                assert_eq!(status, 400);
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .unwrap();
+    }
+
+    let waiter = h.mcp_done(2, &state["server_epoch"], &key);
+    let progress = async {
+        let list = h.tool(2, "list_tvs", json!({})).await;
+        assert_eq!(list["server_epoch"], state["server_epoch"]);
+        assert_eq!(h.json(1, "GET", "/v1/ready", Value::Null).await.0, 200);
+        h.effects.probe_release.notify_one();
+        let (_, event) = events.next().await;
+        assert_eq!(event["server_epoch"], state["server_epoch"]);
+    };
+    let (done, ()) = tokio::join!(waiter, progress);
+    assert_eq!(done["operation_id"], pending["operation_id"]);
+    assert_eq!(h.effects.probes.load(Ordering::SeqCst), 1);
+    assert_eq!(h.effects.discovery.load(Ordering::SeqCst), 0);
+
+    // The fake management port records admission without shutting down this
+    // fixture, so cancellation recovery can be checked on the same listener.
+    let (status, _) = h
+        .json(
+            1,
+            "POST",
+            "/v1/server/stop",
+            json!({"server_epoch":state["server_epoch"],
+                "operation_key":uuid::Uuid::new_v4().to_string()}),
+        )
+        .await;
+    assert_eq!(status, 200);
+    assert_eq!(h.stops.0.load(Ordering::SeqCst), 1);
+
+    // Cancelling the bodies returns capacity for each role; invalid probes
+    // cannot accidentally dispatch an effect while waiting for that release.
+    drop(stalled);
+    for principal in [1, 2] {
+        tokio::time::timeout(Duration::from_secs(3), async {
+            loop {
+                let status = h
+                    .json(principal, "POST", "/v1/discoveries", json!({}))
+                    .await
+                    .0;
+                if status != 429 {
+                    assert_eq!(status, 400);
+                    break;
+                }
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .unwrap();
+    }
+    let key = uuid::Uuid::new_v4().to_string();
+    h.tool(
+        2,
+        "discover_tvs",
+        json!({"server_epoch":state["server_epoch"],"operation_key":key}),
+    )
+    .await;
+    assert_eq!(
+        h.mcp_done(2, &state["server_epoch"], &key).await["result"]["kind"],
+        "discovered"
+    );
+    assert_eq!(h.effects.discovery.load(Ordering::SeqCst), 1);
+
+    assert_eq!(h.effects.writes.load(Ordering::SeqCst), 0);
+    assert_eq!(h.effects.packets.load(Ordering::SeqCst), 0);
+    drop(events);
+    h.close().await;
+}
+
+#[tokio::test]
 async fn captured_native_and_mcp_selection_and_configuration_guards_never_retarget() {
     let h = Harness::new().await;
     let device = h.pair().await;

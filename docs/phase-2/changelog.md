@@ -2,6 +2,15 @@
 
 Status: Active
 
+- 2026-11-14 — Inventoried unattended Phase 2 checks and added mixed-client
+  pressure, admitted-worker ownership and post-disable crash recovery tests.
+  Registered the eight existing synthetic TV TLS/WebSocket self-checks in
+  the default Cargo suite. Focused additions passed; default full execution
+  reproduced the existing concurrent-helper timeout, so D8 remains open.
+  The diagnostic full suite passed with four test threads.
+  See the [automation inventory](automated-validation.md) and
+  [review follow-up](milestone-11-review.md#unattended-validation-follow-up--2026-11-14).
+
 - 2026-11-14 — Started P2-M11 implementation against the stable service
   contracts. Added combined native-client/MCP guard, private recovery,
   subscription and storage-fault fixtures; removal-sequence process coverage;

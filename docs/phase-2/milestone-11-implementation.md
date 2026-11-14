@@ -154,3 +154,17 @@ process target passed all 19 tests, including the four-case removal matrix.
 All four combined client tests, two publication unit tests and 21 Python
 installer cases passed. Exact limits and remaining acceptance are recorded in
 the [acceptance review](milestone-11-review.md).
+
+### Unattended validation follow-up — 2026-11-14
+
+See the [automation inventory](automated-validation.md) for added D5 mixed-load,
+D8 paused-worker and D9 crash-boundary regressions, and the new default Cargo
+entrypoint for all eight Python synthetic TLS/WebSocket fixture checks. All
+new cases passed focused execution. The subsequent default-concurrency full
+run reproduced a concurrent-helper `mcp_helper_timeout`; its focused rerun
+passed. The diagnostic full `cargo test -- --test-threads=4` run passed all
+202 library tests and every integration target, including 20 process tests
+and the new TV fixture target. D8 remains unresolved at default concurrency. The
+[review follow-up](milestone-11-review.md#unattended-validation-follow-up--2026-11-14)
+retains the failure and validation limits; earlier all-green records above
+remain historical evidence for their own source diff.

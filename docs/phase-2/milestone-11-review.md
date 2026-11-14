@@ -89,3 +89,44 @@ zero again. The final 180-file source manifest SHA-256 is
 `59bf1308d1b1450534ffc8c7daa96476b37a4a8cabd2b494dd945105cf4438af`;
 the [ledger](milestone-11-implementation.md#candidate-and-entry-freeze--2026-11-14)
 defines the reproducible manifest algorithm.
+
+## Unattended validation follow-up — 2026-11-14
+
+The [automation inventory](automated-validation.md) identifies Phase 2 checks
+that need neither hardware nor human interaction. On base revision
+`90b6552e6f1a5ba86b48d663656f46424a40d407` plus this working-tree diff,
+three new regressions cover mixed native/MCP pressure, ownership during a
+paused persistence worker, and crash recovery between durable MCP disable and
+configuration removal. The eight Python synthetic TLS/WebSocket fixture
+self-checks now also run from a Cargo integration target.
+
+Focused execution passed all three new regressions and `cargo test --test
+tv_fixture` (eight Python cases). Formatting, all-target Clippy and
+`git diff --check` passed. The first sandboxed mixed-load run failed to bind
+its ephemeral listener (`Operation not permitted`); the permitted isolated
+loopback run passed. The first crash regression attached before foreground
+startup completed and failed with `Bootstrap(Unavailable)`. Synchronizing on
+ownership and using the launcher's bounded attach path corrected that fixture;
+focused and full-run execution then passed.
+
+The default-concurrency `cargo test` run **failed** in the previously recorded
+`concurrent_header_helpers_cold_start_one_owner_and_reuse_one_mcp_bearer`:
+one helper exited 1 with `{"error":"mcp_helper_timeout"}`. All 202 library
+tests and preceding integration targets passed; the process target passed 19
+of 20 cases, including both new transport/process regressions. Cargo stopped
+at that failure, so later targets were not executed by that invocation.
+The newly registered TV fixture passed separately. A focused concurrent-helper
+rerun passed; that does not resolve D8 or invalidate the default-run failure.
+The timeout suggests load sensitivity but does not establish its root cause.
+Production deadlines and assertions remain unchanged.
+
+The diagnostic full run `cargo test -- --test-threads=4` then **passed**:
+202 library tests and every integration target, including all 46 HTTP cases,
+all 20 process cases and the new TV fixture target (eight Python cases).
+This is a qualified pass at four test threads, not a pass of the default
+concurrency gate. It establishes neither the cause nor resolution of D8.
+
+This follow-up is deterministic evidence only. The full D5/D9 schedule audit,
+D8 reliability diagnosis and all unwaived native gates remain open. The
+owner's installation, Claude configuration, credentials and physical TV were
+not changed.

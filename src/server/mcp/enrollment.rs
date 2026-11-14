@@ -625,6 +625,77 @@ mod tests {
     }
 
     #[test]
+    fn blocked_management_worker_retains_ownership_until_durable_disable_finishes() {
+        use std::sync::mpsc;
+        use std::time::Duration;
+
+        struct PausedStore {
+            inner: FileEnrollment,
+            entered: mpsc::SyncSender<()>,
+            release: Mutex<mpsc::Receiver<()>>,
+        }
+        impl EnrollmentStore for PausedStore {
+            fn read(&self) -> Result<Record, EnrollmentError> {
+                self.inner.read()
+            }
+            fn write(&self, record: &Record) -> Result<(), EnrollmentError> {
+                self.entered.send(()).unwrap();
+                self.release
+                    .lock()
+                    .unwrap()
+                    .recv_timeout(Duration::from_secs(5))
+                    .unwrap();
+                self.inner.write(record)
+            }
+        }
+        let base = tempfile::tempdir().unwrap();
+        let directory = Arc::new(
+            RuntimeDirectory::open(&base.path().canonicalize().unwrap().join("profile")).unwrap(),
+        );
+        let owner = directory.lock().unwrap();
+        let (entered_tx, entered_rx) = mpsc::sync_channel(1);
+        let (release_tx, release_rx) = mpsc::sync_channel(1);
+        let access = gate();
+        let enrollment = Arc::new(
+            Enrollment::online(
+                Arc::new(PausedStore {
+                    inner: FileEnrollment::new(directory.clone(), Namespace::Development),
+                    entered: entered_tx,
+                    release: Mutex::new(release_rx),
+                }),
+                Arc::new(Credentials),
+                access.clone(),
+            )
+            .retain_ownership(&owner)
+            .unwrap(),
+        );
+        let worker = enrollment.clone();
+        let job = std::thread::spawn(move || {
+            worker.change_authorized(&client(&access, &[1; 32]), 0, &key(), false)
+        });
+        entered_rx.recv_timeout(Duration::from_secs(5)).unwrap();
+        // Model cancellation of the HTTP task and composition while its
+        // admitted blocking storage worker is still running.
+        drop(enrollment);
+        drop(owner);
+        assert!(matches!(
+            directory.lock(),
+            Err(crate::infrastructure::private_files::FileError::Locked)
+        ));
+        release_tx.send(()).unwrap();
+        let disabled = job.join().unwrap().unwrap();
+        assert!(!disabled.enabled);
+        assert_eq!(disabled.generation, Counter(1));
+        let _next_owner = directory.lock().unwrap();
+        assert_eq!(
+            FileEnrollment::new(directory, Namespace::Development)
+                .read()
+                .unwrap(),
+            disabled
+        );
+    }
+
+    #[test]
     fn admitted_management_retains_profile_ownership_after_composition_guard_drops() {
         let base = tempfile::tempdir().unwrap();
         let directory = Arc::new(
