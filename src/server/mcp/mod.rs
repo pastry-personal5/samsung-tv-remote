@@ -23,19 +23,18 @@ pub struct Adapter {
     waiters: Arc<Semaphore>,
     waiters_by_client: HashMap<ClientId, Arc<Semaphore>>,
 }
-impl Default for Adapter {
-    fn default() -> Self {
+impl Adapter {
+    /// Waiter capacity covers exactly the identities the HTTP adapter serves.
+    pub fn new(identities: impl IntoIterator<Item = ClientId>) -> Self {
         Self {
             cursors: cursor::Cursors::default(),
             waiters: Arc::new(Semaphore::new(4)),
-            waiters_by_client: [ClientId(1), ClientId(2)]
+            waiters_by_client: identities
                 .into_iter()
                 .map(|id| (id, Arc::new(Semaphore::new(2))))
                 .collect(),
         }
     }
-}
-impl Adapter {
     pub async fn dispatch(
         &self,
         rpc: Rpc,

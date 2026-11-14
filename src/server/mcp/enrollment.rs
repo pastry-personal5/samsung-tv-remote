@@ -26,6 +26,21 @@ pub enum EnrollmentError {
     RevocationPending,
     Exhausted,
 }
+impl EnrollmentError {
+    /// One stable code for the live route, offline CLI and remote decoding.
+    pub fn code(self) -> &'static str {
+        match self {
+            Self::Denied => "forbidden",
+            Self::StaleGeneration => "stale_enrollment",
+            Self::KeyConflict => "operation_key_conflict",
+            Self::UnsafeMetadata => "unsafe_enrollment",
+            Self::Persistence => "enrollment_persistence_failed",
+            Self::Credential(_) => "mcp_credentials_blocked",
+            Self::RevocationPending => "mcp_revocation_pending",
+            Self::Exhausted => "enrollment_exhausted",
+        }
+    }
+}
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Record {

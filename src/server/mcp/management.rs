@@ -36,16 +36,7 @@ impl Error {
     pub fn code(self) -> &'static str {
         match self {
             Self::Launch(error) => error.code(),
-            Self::Enrollment(error) => match error {
-                EnrollmentError::Denied => "forbidden",
-                EnrollmentError::StaleGeneration => "stale_enrollment",
-                EnrollmentError::KeyConflict => "operation_key_conflict",
-                EnrollmentError::UnsafeMetadata => "unsafe_enrollment",
-                EnrollmentError::Persistence => "enrollment_persistence_failed",
-                EnrollmentError::Credential(_) => "mcp_credentials_blocked",
-                EnrollmentError::RevocationPending => "mcp_revocation_pending",
-                EnrollmentError::Exhausted => "enrollment_exhausted",
-            },
+            Self::Enrollment(error) => error.code(),
             Self::Unavailable => "mcp_management_unavailable",
             Self::Timeout => "mcp_management_outcome_unknown",
             Self::Remote(code) => code,
@@ -79,17 +70,27 @@ fn context(profile: Profile, executable: PathBuf) -> Result<Context, Error> {
         build,
     })
 }
+// Only known codes cross back to the caller; anything else stays generic.
+const REMOTE_CODES: [EnrollmentError; 8] = [
+    EnrollmentError::Denied,
+    EnrollmentError::StaleGeneration,
+    EnrollmentError::KeyConflict,
+    EnrollmentError::UnsafeMetadata,
+    EnrollmentError::Persistence,
+    EnrollmentError::Credential(BootstrapError::Denied),
+    EnrollmentError::RevocationPending,
+    EnrollmentError::Exhausted,
+];
 fn remote_error(body: &Value) -> Error {
-    Error::Remote(match body["error"]["code"].as_str() {
-        Some("stale_epoch") => "stale_epoch",
-        Some("stale_enrollment") => "stale_enrollment",
-        Some("operation_key_conflict") => "operation_key_conflict",
-        Some("forbidden") => "forbidden",
-        Some("unsafe_enrollment") => "unsafe_enrollment",
-        Some("enrollment_persistence_failed") => "enrollment_persistence_failed",
-        Some("mcp_credentials_blocked") => "mcp_credentials_blocked",
-        Some("mcp_revocation_pending") => "mcp_revocation_pending",
-        _ => "mcp_management_unavailable",
+    let code = body["error"]["code"].as_str();
+    Error::Remote(if code == Some("stale_epoch") {
+        "stale_epoch"
+    } else {
+        REMOTE_CODES
+            .iter()
+            .map(|error| error.code())
+            .find(|known| Some(*known) == code)
+            .unwrap_or("mcp_management_unavailable")
     })
 }
 fn offline(context: &Context, ownership: OwnershipLock, action: &Action) -> Result<Value, Error> {
@@ -174,4 +175,25 @@ pub async fn run(profile: Profile, executable: PathBuf, action: Action) -> Resul
             }
         }
     }).await.map_err(|_| Error::Timeout)?
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn remote_codes_match_offline_codes_and_unknown_codes_stay_generic() {
+        for error in REMOTE_CODES {
+            let body = json!({"error":{"code":error.code()}});
+            assert_eq!(remote_error(&body).code(), Error::Enrollment(error).code());
+        }
+        assert_eq!(
+            remote_error(&json!({"error":{"code":"stale_epoch"}})).code(),
+            "stale_epoch"
+        );
+        assert_eq!(
+            remote_error(&json!({"error":{"code":"secret"}})).code(),
+            "mcp_management_unavailable"
+        );
+    }
 }

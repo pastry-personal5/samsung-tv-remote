@@ -63,6 +63,7 @@ struct Effects {
     wake_after_send_wait: std::sync::atomic::AtomicBool,
     wake_after_send_release: tokio::sync::Notify,
     wake_returned: AtomicUsize,
+    second_host: std::sync::atomic::AtomicBool,
 }
 #[derive(Clone)]
 struct Secrets {
@@ -231,7 +232,11 @@ impl TvDiscovery for Ports {
         if let Some(error) = *self.0.discovery_error.lock().unwrap() {
             return Box::pin(async move { Err(error) });
         }
-        Box::pin(async { Ok(vec![TvHost::parse("tv.local").unwrap()]) })
+        let mut hosts = vec![TvHost::parse("tv.local").unwrap()];
+        if self.0.second_host.load(Ordering::SeqCst) {
+            hosts.push(TvHost::parse("tv-2.local").unwrap());
+        }
+        Box::pin(async move { Ok(hosts) })
     }
 }
 impl WakeTransport for Ports {

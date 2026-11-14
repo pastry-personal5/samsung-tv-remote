@@ -14,8 +14,8 @@ use crate::application::control_service::*;
 use crate::application::control_state::{ConnectionState, PairingState};
 use crate::server::access::AuthorizedClient;
 use crate::server::control_http::{
-    request::{self, MutationRoute, RequestError},
-    response, wire,
+    request::{self, MutationRoute},
+    response, transport, wire,
 };
 
 #[derive(Deserialize, Default)]
@@ -62,16 +62,6 @@ impl Selector {
     }
 }
 
-fn request_error(error: RequestError) -> &'static str {
-    match error {
-        RequestError::InvalidRequest => "invalid_request",
-        RequestError::StaleEpoch => "stale_epoch",
-        RequestError::InvalidId => "invalid_id",
-        RequestError::InvalidTarget => "invalid_target",
-        RequestError::InvalidConfirmation => "invalid_confirmation",
-        RequestError::TooLarge => "input_too_large",
-    }
-}
 fn key(value: &str) -> bool {
     uuid::Uuid::parse_str(value).is_ok_and(|id| id.hyphenated().to_string() == value)
 }
@@ -329,11 +319,9 @@ async fn operation(
     if wait > 10 || (wait > 0 && page.cursor.is_some()) {
         return results::failure("invalid_request", Some(snapshot));
     }
-    let query = match (&args.operation_id, &args.operation_key) {
-        (Some(id), None) => format!("id:{id}"),
-        (None, Some(key)) => format!("key:{key}"),
-        _ => return results::failure("invalid_request", Some(snapshot)),
-    };
+    if args.operation_id.is_some() == args.operation_key.is_some() {
+        return results::failure("invalid_request", Some(snapshot));
+    }
     if epoch != snapshot.epoch {
         return unknown("unknown_after_restart", &args.server_epoch, Some(snapshot));
     }
@@ -387,6 +375,12 @@ async fn operation(
                 _ = tokio::time::sleep_until(end) => false,
             };
             if closed {
+                // The owner closes a full subscriber; resubscribe. Only a
+                // refused subscription means the service is stopping.
+                if let Ok(next) = service.subscribe().await {
+                    subscription = next;
+                    continue;
+                }
                 let final_lookup = match selector.lookup(service, epoch).await {
                     Ok(v) => v,
                     Err(error) => {
@@ -412,9 +406,7 @@ async fn operation(
         lookup
     };
     match lookup {
-        Lookup::Known(receipt) => {
-            project_receipt(adapter, &receipt, client.identity, &query, &page, size)
-        }
+        Lookup::Known(receipt) => project_receipt(adapter, &receipt, client.identity, &page, size),
         Lookup::UnknownAfterRestart => {
             unknown("unknown_after_restart", &args.server_epoch, Some(snapshot))
         }
@@ -433,16 +425,17 @@ fn project_receipt(
     adapter: &Adapter,
     receipt: &Receipt,
     client: ClientId,
-    query: &str,
     page: &PageArgs,
     size: usize,
 ) -> Value {
     let mut value = results::receipt(receipt);
     let source = cursor::digest(&serde_json::to_vec(&value["result"]).expect("outcome JSON"));
+    // Scope by operation, not selector: a page continues by its ID or original key.
+    let query = format!("id:{}", wire::operation(receipt.id));
     let scope = Scope {
         client,
         epoch: receipt.metadata.epoch,
-        query,
+        query: &query,
         source: &source,
         size,
     };
@@ -515,19 +508,19 @@ async fn mutation(
     let bytes = serde_json::to_vec(&arguments).expect("argument JSON");
     let request = match request::parse_mutation(route, &bytes, snapshot.epoch) {
         Ok(v) => v,
-        Err(error) => return results::failure(request_error(error), Some(snapshot)),
+        Err(error) => {
+            return results::failure(transport::request_error(error).code, Some(snapshot))
+        }
     };
     match service
         .submit_authorized(request, client.admission.clone())
         .await
     {
         Ok(receipt) => {
-            let query = format!("id:{}", wire::operation(receipt.id));
             let mut value = project_receipt(
                 adapter,
                 &receipt,
                 client.identity,
-                &query,
                 &PageArgs::default(),
                 catalog::PAGE_DEFAULT,
             );

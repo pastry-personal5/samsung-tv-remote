@@ -168,6 +168,47 @@ pub fn parse(arguments: &[OsString]) -> Result<Mode, LaunchError> {
         inherited,
     })
 }
+/// One foreground MCP call. Only a success value reaches stdout; failures
+/// print a stable error code to stderr.
+fn foreground<F, T, E>(
+    base: Option<PathBuf>,
+    code: fn(E) -> &'static str,
+    run: impl FnOnce(super::profile::Profile, PathBuf) -> F,
+) -> i32
+where
+    F: std::future::Future<Output = Result<T, E>>,
+    T: std::fmt::Display,
+{
+    let Ok(executable) = std::env::current_exe() else {
+        return 1;
+    };
+    let profile = base.map_or(
+        super::profile::Profile::Control,
+        super::profile::Profile::Development,
+    );
+    let runtime = match tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(2)
+        .enable_all()
+        .build()
+    {
+        Ok(runtime) => runtime,
+        Err(_) => return 1,
+    };
+    let result = runtime.block_on(run(profile, executable));
+    // A timed-out read-only preflight may still own a blocking worker.
+    // Do not let Runtime::drop extend Claude's helper execution deadline.
+    runtime.shutdown_background();
+    match result {
+        Ok(value) => {
+            println!("{value}");
+            0
+        }
+        Err(error) => {
+            eprintln!("{}", json!({"error":code(error)}));
+            1
+        }
+    }
+}
 /// None selects GUI composition; management commands return
 /// sanitized status only. The dedicated MCP header mode intentionally emits
 /// one client Authorization object; TV pairing secrets are never printed.
@@ -181,69 +222,19 @@ pub fn dispatch(arguments: &[OsString]) -> Option<i32> {
         }
     };
     if let Mode::McpHeaders { base } = mode {
-        let Ok(executable) = std::env::current_exe() else {
-            return Some(1);
-        };
-        let profile = base.map_or(
-            super::profile::Profile::Control,
-            super::profile::Profile::Development,
-        );
         let destination = std::env::var("CLAUDE_CODE_MCP_SERVER_URL").unwrap_or_default();
-        let runtime = match tokio::runtime::Builder::new_multi_thread()
-            .worker_threads(2)
-            .enable_all()
-            .build()
-        {
-            Ok(runtime) => runtime,
-            Err(_) => return Some(1),
-        };
-        let result = runtime.block_on(super::mcp::helper::headers(
-            profile,
-            executable,
-            destination,
+        return Some(foreground(
+            base,
+            super::mcp::helper::HelperError::code,
+            |profile, executable| super::mcp::helper::headers(profile, executable, destination),
         ));
-        // A timed-out read-only preflight may still own a blocking worker.
-        // Do not let Runtime::drop extend Claude's helper execution deadline.
-        runtime.shutdown_background();
-        return Some(match result {
-            Ok(headers) => {
-                println!("{headers}");
-                0
-            }
-            Err(error) => {
-                eprintln!("{}", json!({"error":error.code()}));
-                1
-            }
-        });
     }
     if let Mode::McpManagement { base, action } = mode {
-        let Ok(executable) = std::env::current_exe() else {
-            return Some(1);
-        };
-        let profile = base.map_or(
-            super::profile::Profile::Control,
-            super::profile::Profile::Development,
-        );
-        let runtime = match tokio::runtime::Builder::new_multi_thread()
-            .worker_threads(2)
-            .enable_all()
-            .build()
-        {
-            Ok(runtime) => runtime,
-            Err(_) => return Some(1),
-        };
-        let result = runtime.block_on(super::mcp::management::run(profile, executable, action));
-        runtime.shutdown_background();
-        return Some(match result {
-            Ok(summary) => {
-                println!("{summary}");
-                0
-            }
-            Err(error) => {
-                eprintln!("{}", json!({"error":error.code()}));
-                1
-            }
-        });
+        return Some(foreground(
+            base,
+            super::mcp::management::Error::code,
+            |profile, executable| super::mcp::management::run(profile, executable, action),
+        ));
     }
     if let Mode::ApiAccess { request } = mode {
         // A single foreground maintenance call, before Tokio, Iced, profile

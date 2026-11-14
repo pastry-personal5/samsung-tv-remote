@@ -92,6 +92,7 @@ impl HttpAdapter {
                 )
             })
             .collect();
+        let mcp = mcp::Adapter::new(services.iter().map(|(id, _)| *id));
         Self {
             access,
             services: services.into_iter().collect(),
@@ -102,7 +103,7 @@ impl HttpAdapter {
             management: Arc::new(Semaphore::new(4)),
             classification: Arc::new(Semaphore::new(MAX_CLASSIFY)),
             clients,
-            mcp: mcp::Adapter::default(),
+            mcp,
             enrollment: None,
         }
     }
@@ -559,18 +560,17 @@ fn access_error(error: AccessError) -> ErrorCode {
     }
 }
 fn enrollment_error(error: EnrollmentError) -> ErrorCode {
-    match error {
-        EnrollmentError::Denied => code(403, "forbidden"),
-        EnrollmentError::StaleGeneration => code(409, "stale_enrollment"),
-        EnrollmentError::KeyConflict => code(409, "operation_key_conflict"),
-        EnrollmentError::UnsafeMetadata => code(423, "unsafe_enrollment"),
-        EnrollmentError::Persistence => code(503, "enrollment_persistence_failed"),
-        EnrollmentError::Credential(_) => code(423, "mcp_credentials_blocked"),
-        EnrollmentError::RevocationPending => code(503, "mcp_revocation_pending"),
-        EnrollmentError::Exhausted => code(503, "enrollment_exhausted"),
-    }
+    let status = match error {
+        EnrollmentError::Denied => 403,
+        EnrollmentError::StaleGeneration | EnrollmentError::KeyConflict => 409,
+        EnrollmentError::UnsafeMetadata | EnrollmentError::Credential(_) => 423,
+        EnrollmentError::Persistence
+        | EnrollmentError::RevocationPending
+        | EnrollmentError::Exhausted => 503,
+    };
+    code(status, error.code())
 }
-fn request_error(error: RequestError) -> ErrorCode {
+pub(crate) fn request_error(error: RequestError) -> ErrorCode {
     match error {
         RequestError::InvalidRequest => code(400, "invalid_request"),
         RequestError::StaleEpoch => code(409, "stale_epoch"),

@@ -342,9 +342,6 @@ fn edit_observed(
     if present != expected.map(Entry::value).as_ref() {
         return Err(Error::Conflict);
     }
-    if expected == desired {
-        return Ok(());
-    }
     if value.get("mcpServers").is_none() {
         value["mcpServers"] = json!({});
     }

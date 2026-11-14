@@ -537,3 +537,83 @@ async fn inspection_bounds_unicode_labels_without_changing_saved_configuration()
     assert_eq!(native["label"], label);
     h.close().await;
 }
+
+#[tokio::test]
+async fn waiting_survives_an_overflowed_subscription_without_claiming_server_stop() {
+    let h = Harness::with_limits(RuntimeLimits {
+        subscriber_backlog: 1,
+        ..Default::default()
+    })
+    .await;
+    h.effects.probe_wait.store(true, Ordering::SeqCst);
+    let state = h.state().await;
+    let epoch = state["server_epoch"].clone();
+    let key = uuid::Uuid::new_v4().to_string();
+    let pending = h
+        .tool(
+            2,
+            "probe_tv",
+            json!({"server_epoch":epoch,"operation_key":key,"host":"synthetic-tv.invalid"}),
+        )
+        .await;
+    assert_eq!(pending["state"], "pending", "{pending}");
+    let Owner::Runtime(runtime) = &h.owner else {
+        panic!("runtime harness")
+    };
+    let gui = runtime.client(ClientId(1));
+    let current = gui.snapshot().await.unwrap().epoch;
+    let burst = async {
+        tokio::time::sleep(Duration::from_millis(300)).await;
+        // Queued together, these events overflow the one-slot waiter backlog.
+        let submit = |key: &'static str| {
+            gui.submit(samsung_tv_remote::application::control_service::Request {
+                epoch: current,
+                key: key.into(),
+                command: Command::Discover,
+            })
+        };
+        let _ = tokio::join!(submit("burst-1"), submit("burst-2"), submit("burst-3"));
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        h.effects.probe_release.notify_one();
+    };
+    let (waited, ()) = tokio::join!(
+        h.tool(
+            2,
+            "get_operation",
+            json!({"server_epoch":epoch,"operation_key":key,"wait_seconds":2}),
+        ),
+        burst
+    );
+    assert!(waited.get("error").is_none(), "{waited}");
+    assert_eq!(waited["state"], "terminal", "{waited}");
+    assert_eq!(waited["result"]["kind"], "probed");
+}
+
+#[tokio::test]
+async fn receipt_pages_continue_by_either_operation_selector() {
+    let h = Harness::new().await;
+    h.effects.second_host.store(true, Ordering::SeqCst);
+    let discovery = h.mcp_mutate("discover_tvs", json!({})).await;
+    let epoch = &discovery["server_epoch"];
+    let first = h
+        .tool(
+            2,
+            "get_operation",
+            json!({"server_epoch":epoch,"operation_id":discovery["operation_id"],"page_size":1}),
+        )
+        .await;
+    assert_eq!(first["result"]["candidates"].as_array().unwrap().len(), 1);
+    let second = h
+        .tool(
+            2,
+            "get_operation",
+            json!({"server_epoch":epoch,"operation_key":discovery["operation_key"],"page_size":1,"cursor":first["next_cursor"]}),
+        )
+        .await;
+    assert!(second.get("error").is_none(), "{second}");
+    assert_ne!(
+        second["result"]["candidates"][0],
+        first["result"]["candidates"][0]
+    );
+    assert!(second["next_cursor"].is_null());
+}
