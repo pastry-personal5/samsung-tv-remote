@@ -1,10 +1,48 @@
-//! Keep proposed MCP schemas and published examples aligned with the actual
-//! M8 wire parser. This does not implement or claim a working MCP adapter.
+//! Reconcile corpus inputs with the implemented MCP catalog and native parser.
+//! Historical result projections remain a proxy, not actual client evidence.
 use samsung_tv_remote::server::control_http::{
     request::{parse_mutation, parse_stop, MutationRoute},
     wire::{self, Counter},
 };
 use serde_json::Value;
+
+#[test]
+fn every_corpus_input_conforms_to_the_shipped_tool_schema() {
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+    let output = std::process::Command::new("python3")
+        .arg(root.join("scripts/measure_mcp_corpus.py"))
+        .arg("--wire-fixtures")
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let samples: Value = serde_json::from_slice(&output.stdout).unwrap();
+    let catalog = samsung_tv_remote::server::mcp::catalog::tools()
+        .as_array()
+        .unwrap();
+    assert_eq!(samples.as_object().unwrap().len(), catalog.len());
+    for tool in catalog {
+        let name = tool["name"].as_str().unwrap();
+        let arguments = &samples[name]["arguments"];
+        assert!(arguments.is_object(), "missing corpus input: {name}");
+        let validator = jsonschema::draft202012::options()
+            .offline()
+            .should_validate_formats(true)
+            .build(&tool["inputSchema"])
+            .unwrap();
+        let errors: Vec<_> = validator
+            .iter_errors(arguments)
+            .map(|e| e.to_string())
+            .collect();
+        assert!(errors.is_empty(), "{name}: {errors:?}");
+    }
+    // Count the complete shipped definitions, including output schemas and
+    // annotations. The historical M6 input-only estimate is not this catalog.
+    let bytes = serde_json::to_vec(samsung_tv_remote::server::mcp::catalog::tools())
+        .unwrap()
+        .len();
+    let instructions = samsung_tv_remote::server::mcp::catalog::INSTRUCTIONS.len();
+    println!("Shipped catalog UTF-8 proxy: definitions={} bytes / {} units; instructions={} bytes / {} units. Actual client tokens unmeasured.", bytes, bytes.div_ceil(4), instructions, instructions.div_ceil(4));
+}
 
 #[test]
 fn proposed_mcp_mutation_arguments_parse_as_the_corresponding_http_commands() {

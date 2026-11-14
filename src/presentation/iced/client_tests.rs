@@ -23,8 +23,28 @@ struct FakeClient {
     disconnected: AtomicBool,
     replies: Mutex<std::collections::VecDeque<Result<NativeReceipt, SubmitError>>>,
     management_replies: Mutex<std::collections::VecDeque<Result<ManagementReply, ManagementError>>>,
+    mcp: Mutex<Vec<crate::control_client::mcp::Intent>>,
+    mcp_replies: Mutex<
+        std::collections::VecDeque<
+            Result<crate::control_client::mcp::State, crate::control_client::mcp::Error>,
+        >,
+    >,
 }
 impl NativeClient for FakeClient {
+    fn mcp(
+        self: Arc<Self>,
+        intent: crate::control_client::mcp::Intent,
+    ) -> ClientFuture<Result<crate::control_client::mcp::State, crate::control_client::mcp::Error>>
+    {
+        Box::pin(async move {
+            self.mcp.lock().unwrap().push(intent);
+            self.mcp_replies
+                .lock()
+                .unwrap()
+                .pop_front()
+                .unwrap_or(Err(crate::control_client::mcp::Error::Unavailable))
+        })
+    }
     fn connected(&self) -> bool {
         self.online.load(Ordering::SeqCst)
     }
@@ -1451,4 +1471,148 @@ async fn server_management_results_stay_in_servers_settings() {
     assert!(app.stop_result.is_some_and(|result| result.is_ok()));
     assert_eq!(app.settings_status, guidance);
     assert_eq!(app.view_model.messages().entries().len(), messages);
+}
+
+fn mcp_state(enabled: bool) -> crate::control_client::mcp::State {
+    crate::control_client::mcp::State {
+        configuration: if enabled {
+            crate::control_client::mcp::Configuration::Saved
+        } else {
+            crate::control_client::mcp::Configuration::Absent
+        },
+        enabled,
+        endpoint_verified: false,
+        generation: 1,
+        entry: None,
+    }
+}
+
+#[tokio::test]
+async fn mcp_connection_is_opt_in_and_separates_saved_from_verified_and_attached() {
+    use crate::control_client::mcp::Intent;
+    let (mut app, client) = app();
+    assert!(client.mcp.lock().unwrap().is_empty());
+    let task = app.update(Message::ConnectMcp);
+    run(&mut app, task).await;
+    assert!(client.mcp.lock().unwrap().is_empty());
+    client
+        .mcp_replies
+        .lock()
+        .unwrap()
+        .push_back(Ok(mcp_state(false)));
+    let task = app.update(Message::CheckMcp);
+    run(&mut app, task).await;
+    assert_eq!(*client.mcp.lock().unwrap(), [Intent::Check]);
+    client
+        .mcp_replies
+        .lock()
+        .unwrap()
+        .push_back(Ok(mcp_state(true)));
+    let task = app.update(Message::ConnectMcp);
+    run(&mut app, task).await;
+    assert!(matches!(
+        &client.mcp.lock().unwrap()[1],
+        Intent::Connect { .. }
+    ));
+    assert!(!app.mcp_state.as_ref().unwrap().endpoint_verified);
+    let mut verified = mcp_state(true);
+    verified.endpoint_verified = true;
+    client.mcp_replies.lock().unwrap().push_back(Ok(verified));
+    let task = app.update(Message::VerifyMcp);
+    run(&mut app, task).await;
+    assert!(app.mcp_state.as_ref().unwrap().endpoint_verified);
+    assert_eq!(client.requests.lock().unwrap().len(), 0);
+}
+
+#[tokio::test]
+async fn mcp_disconnect_needs_confirmation_and_retry_keeps_original_management_key() {
+    use crate::control_client::mcp::{Error, Intent, Progress, WorkflowConfiguration};
+    let (mut app, client) = app();
+    app.mcp_state = Some(mcp_state(true));
+    // Enrollment management is usable while intentionally stopped.
+    app.remote_status = Some(crate::control_client::background::Status::Blocked(
+        crate::control_client::reconnect::Blocked::Stopped,
+    ));
+    let task = app.update(Message::ConfirmDisconnectMcp);
+    run(&mut app, task).await;
+    assert!(client.mcp.lock().unwrap().is_empty());
+    let task = app.update(Message::RequestDisconnectMcp);
+    run(&mut app, task).await;
+    assert!(app.mcp_disconnect_confirmation);
+    client
+        .mcp_replies
+        .lock()
+        .unwrap()
+        .push_back(Err(Error::Workflow(Progress {
+            configuration: WorkflowConfiguration::Unchanged,
+            enabled: None,
+            recovery_file: None,
+        })));
+    let task = app.update(Message::ConfirmDisconnectMcp);
+    run(&mut app, task).await;
+    assert!(app.mcp_state.is_none());
+    assert!(app.mcp_error.is_some());
+    let original = client.mcp.lock().unwrap()[0].clone();
+    assert!(matches!(original, Intent::Disconnect { .. }));
+    client
+        .mcp_replies
+        .lock()
+        .unwrap()
+        .push_back(Ok(mcp_state(false)));
+    let task = app.update(Message::RetryMcp);
+    run(&mut app, task).await;
+    assert_eq!(client.mcp.lock().unwrap()[1], original);
+    assert!(!app.mcp_state.as_ref().unwrap().enabled);
+    assert!(client.management.lock().unwrap().is_empty());
+    assert!(client.requests.lock().unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn mcp_pending_and_conflicting_settings_cannot_launch_another_management_action() {
+    let (mut app, client) = app();
+    let mut state = mcp_state(false);
+    state.configuration = crate::control_client::mcp::Configuration::Conflict;
+    app.mcp_state = Some(state);
+    let task = app.update(Message::ConnectMcp);
+    run(&mut app, task).await;
+    assert!(client.mcp.lock().unwrap().is_empty());
+    app.mcp_pending = true;
+    for message in [
+        Message::CheckMcp,
+        Message::ResumeServer,
+        Message::ConnectMcp,
+    ] {
+        let task = app.update(message);
+        run(&mut app, task).await;
+    }
+    assert!(client.mcp.lock().unwrap().is_empty());
+    assert!(client.management.lock().unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn mcp_relocation_repair_requires_its_own_explicit_confirmation() {
+    let (mut app, client) = app();
+    let mut state = mcp_state(true);
+    state.configuration = crate::control_client::mcp::Configuration::RepairRequired;
+    app.mcp_state = Some(state);
+    for message in [Message::ConnectMcp, Message::ConfirmRepairMcp] {
+        let task = app.update(message);
+        run(&mut app, task).await;
+    }
+    assert!(client.mcp.lock().unwrap().is_empty());
+    let task = app.update(Message::RequestRepairMcp);
+    run(&mut app, task).await;
+    assert!(app.mcp_repair_confirmation);
+    client
+        .mcp_replies
+        .lock()
+        .unwrap()
+        .push_back(Ok(mcp_state(true)));
+    let task = app.update(Message::ConfirmRepairMcp);
+    run(&mut app, task).await;
+    assert!(matches!(
+        &client.mcp.lock().unwrap()[0],
+        crate::control_client::mcp::Intent::Connect { .. }
+    ));
+    assert!(!app.mcp_repair_confirmation);
 }

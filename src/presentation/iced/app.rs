@@ -3,6 +3,8 @@
 mod client_tests;
 #[path = "lifecycle.rs"]
 mod lifecycle;
+#[path = "mcp.rs"]
+mod mcp;
 #[path = "remote_probe.rs"]
 mod remote_probe;
 #[path = "workflows.rs"]
@@ -41,6 +43,12 @@ pub struct App {
     development_probe: bool,
     remote_status: Option<crate::control_client::background::Status>,
     remote_management: bool,
+    mcp_state: Option<crate::control_client::mcp::State>,
+    mcp_pending: bool,
+    mcp_intent: Option<crate::control_client::mcp::Intent>,
+    mcp_error: Option<crate::control_client::mcp::Error>,
+    mcp_disconnect_confirmation: bool,
+    mcp_repair_confirmation: bool,
     pending_management: Option<crate::control_client::port::ManagementIntent>,
     management_error: Option<crate::control_client::port::ManagementError>,
     server_notice: Option<String>,
@@ -82,6 +90,12 @@ impl App {
                 development_probe: false,
                 remote_status: None,
                 remote_management: false,
+                mcp_state: None,
+                mcp_pending: false,
+                mcp_intent: None,
+                mcp_error: None,
+                mcp_disconnect_confirmation: false,
+                mcp_repair_confirmation: false,
                 pending_management: None,
                 management_error: None,
                 server_notice: None,
@@ -125,6 +139,12 @@ impl App {
     }
     fn boot_probe(config: crate::control_client::background::Config) -> (Self, Task<Message>) {
         let (mut app, open) = Self::new();
+        let capture_settings = cfg!(debug_assertions)
+            && std::env::var_os("SAMSUNG_TV_REMOTE_PROBE_CAPTURE").is_some()
+            && std::env::var_os("SAMSUNG_TV_REMOTE_PROBE_CAPTURE_SETTINGS").is_some();
+        if capture_settings {
+            app.settings_page = SettingsPage::Servers;
+        }
         app.development_probe = true;
         app.launch_connected = false;
         app.tv_address = "synthetic-tv.invalid".into();
@@ -134,6 +154,11 @@ impl App {
             app,
             Task::batch([
                 open,
+                if capture_settings {
+                    Task::done(Message::OpenSettings)
+                } else {
+                    Task::none()
+                },
                 if cfg!(debug_assertions)
                     && std::env::var_os("SAMSUNG_TV_REMOTE_PROBE_CAPTURE").is_some()
                 {
@@ -170,11 +195,23 @@ impl App {
         }
         self.prepare_client_intent(&message);
         match message {
-            Message::CaptureProbe if self.development_probe && cfg!(debug_assertions) => {
-                self.main_window.map_or_else(Task::none, |id| {
+            Message::CheckMcp
+            | Message::RequestRepairMcp
+            | Message::ConfirmRepairMcp
+            | Message::CancelRepairMcp
+            | Message::VerifyMcp
+            | Message::ConnectMcp
+            | Message::RequestDisconnectMcp
+            | Message::ConfirmDisconnectMcp
+            | Message::CancelDisconnectMcp
+            | Message::RetryMcp => self.mcp_action(message),
+            Message::McpFinished(result) => self.mcp_finished(result),
+            Message::CaptureProbe if self.development_probe && cfg!(debug_assertions) => self
+                .settings_window
+                .or(self.main_window)
+                .map_or_else(Task::none, |id| {
                     window::screenshot(id).map(Message::ProbeCaptured)
-                })
-            }
+                }),
             Message::ProbeCaptured(screenshot)
                 if self.development_probe && cfg!(debug_assertions) =>
             {

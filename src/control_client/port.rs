@@ -67,6 +67,12 @@ pub trait NativeClient: std::fmt::Debug + Send + Sync {
         intent: ManagementIntent,
     ) -> ClientFuture<Result<ManagementReply, ManagementError>>;
     fn disconnect(&self);
+    fn mcp(
+        self: Arc<Self>,
+        _intent: super::mcp::Intent,
+    ) -> ClientFuture<Result<super::mcp::State, super::mcp::Error>> {
+        Box::pin(async { Err(super::mcp::Error::Unavailable) })
+    }
 }
 
 pub async fn start(config: Config) -> Result<Arc<dyn NativeClient>, ManagementError> {
@@ -99,6 +105,12 @@ fn management_error(error: crate::server::launch::LaunchError) -> ManagementErro
 }
 
 impl NativeClient for Remote {
+    fn mcp(
+        self: Arc<Self>,
+        intent: super::mcp::Intent,
+    ) -> ClientFuture<Result<super::mcp::State, super::mcp::Error>> {
+        Box::pin(async move { self.mcp_connection(intent).await })
+    }
     fn connected(&self) -> bool {
         Remote::connected(self)
     }

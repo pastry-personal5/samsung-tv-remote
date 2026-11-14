@@ -10,6 +10,8 @@ Current references:
 - [Phase 1](phase-1/phase-1.md) — milestone status and open acceptance work.
 - [Phase 2](phase-2/phase-2.md) — active control server, GUI client, and
   Streamable HTTP MCP refactor.
+- [Phase 3](phase-3/phase-3.md) — planned Sources, Apps, and Text Input
+  features on the Phase 2 server.
 - [P2-M6 contract review](phase-2/milestone-06-overview.md) — current
   architecture, API, MCP, migration and signed-prototype evidence.
 - [P2-M7 completion review](phase-2/milestone-07-review.md) — implemented
@@ -29,6 +31,14 @@ Current references:
   The [plan review](phase-2/milestone-10-plan-review.md) records corrected contracts
   and remaining implementation decisions; the
   [implementation ledger](phase-2/milestone-10-implementation.md) tracks active delivery.
+- [P2-M11 integration plan](phase-2/milestone-11-overview.md) — staged cross-client,
+  signed lifecycle/removal, boundary, accessibility and hardware acceptance.
+  The [architecture](phase-2/milestone-11-architecture.md) specifies failure
+  contracts; the [acceptance matrix](phase-2/milestone-11-acceptance.md) separates
+  deterministic, signed native, installed-client and physical-TV evidence.
+  The [implementation ledger](phase-2/milestone-11-implementation.md),
+  [acceptance review](phase-2/milestone-11-review.md) and
+  [native runbook](phase-2/milestone-11-native-runbook.md) track execution.
 - [P2-M6 human test runbook](phase-2/milestone-06-human-runbook.md) — commands
   for the isolated macOS account and remaining platform checks.
 - [Control API Server internals](phase-2/control-server-internals.md) — planned

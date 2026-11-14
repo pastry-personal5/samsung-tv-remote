@@ -517,6 +517,18 @@ async fn mutation(
         .await
     {
         Ok(receipt) => {
+            // Inspect only; a pending observation still returns its original
+            // receipt immediately. This uses neither a subscriber nor a wait
+            // reservation and never submits the command a second time.
+            let receipt =
+                if receipt.outcome.is_none() && matches!(name, "discover_tvs" | "probe_tv") {
+                    match service.operation(snapshot.epoch, receipt.id).await {
+                        Ok(Lookup::Known(current)) => current,
+                        _ => receipt,
+                    }
+                } else {
+                    receipt
+                };
             let mut value = project_receipt(
                 adapter,
                 &receipt,

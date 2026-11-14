@@ -1,4 +1,6 @@
 //! Real loopback HTTP, isolated files and fake TV/credential/Wake boundaries.
+#[path = "support/control_integration.rs"]
+mod cross_client;
 #[path = "support/mcp_http.rs"]
 mod mcp;
 #[path = "support/storage_faults.rs"]
@@ -48,6 +50,7 @@ struct Effects {
     remote_attempts: AtomicUsize,
     remote_release: tokio::sync::Notify,
     probe_panic: std::sync::atomic::AtomicBool,
+    changed_certificate: std::sync::atomic::AtomicBool,
     probe_wait: std::sync::atomic::AtomicBool,
     probe_release: tokio::sync::Notify,
     connect_error: Mutex<Option<TvSessionError>>,
@@ -200,7 +203,13 @@ impl TvGateway for Ports {
                 effects.probe_release.notified().await;
             }
             Ok(ProbeObservation {
-                pin: CertificatePin::from_der(b"synthetic"),
+                pin: CertificatePin::from_der(
+                    if effects.changed_certificate.load(Ordering::SeqCst) {
+                        b"synthetic-replacement"
+                    } else {
+                        b"synthetic"
+                    },
+                ),
                 name: Some("Fake TV".into()),
                 model: None,
             })
@@ -209,10 +218,19 @@ impl TvGateway for Ports {
     fn connect(
         &self,
         _host: TvHost,
-        _pin: CertificatePin,
+        pin: CertificatePin,
         _token: Option<PairingToken>,
     ) -> SessionFuture<'static, Result<Box<dyn TvConnection>, TvSessionError>> {
         self.0.connections.fetch_add(1, Ordering::SeqCst);
+        if pin
+            != CertificatePin::from_der(if self.0.changed_certificate.load(Ordering::SeqCst) {
+                b"synthetic-replacement"
+            } else {
+                b"synthetic"
+            })
+        {
+            return Box::pin(async { Err(TvSessionError::CertificateChanged) });
+        }
         if let Some(error) = *self.0.connect_error.lock().unwrap() {
             return Box::pin(async move { Err(error) });
         }

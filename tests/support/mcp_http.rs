@@ -50,7 +50,7 @@ impl Harness {
         assert_eq!(body["id"], id, "{body}");
         (status, body)
     }
-    async fn tool(&self, client: u8, name: &str, arguments: Value) -> Value {
+    pub(super) async fn tool(&self, client: u8, name: &str, arguments: Value) -> Value {
         let (status, body) = self
             .rpc(
                 client,
@@ -87,7 +87,7 @@ impl Harness {
         );
         data
     }
-    async fn mcp_done(&self, client: u8, epoch: &Value, key: &str) -> Value {
+    pub(super) async fn mcp_done(&self, client: u8, epoch: &Value, key: &str) -> Value {
         let value = self
             .tool(
                 client,
@@ -113,6 +113,59 @@ impl Harness {
         assert_eq!(done["operation_id"], first["operation_id"]);
         done
     }
+}
+
+#[tokio::test]
+async fn native_verification_uses_authenticated_mcp_headers_without_tv_effects() {
+    let h = Harness::new().await;
+    let endpoint = samsung_tv_remote::control_client::http::Endpoint::parse(&format!(
+        "http://127.0.0.1:{}",
+        h.port
+    ))
+    .unwrap();
+    let request = json!({"jsonrpc":"2.0","id":"native-verify","method":"tools/list","params":{"_meta":{
+        "io.modelcontextprotocol/protocolVersion":VERSION,"io.modelcontextprotocol/clientCapabilities":{}}}});
+    let (status, value) = samsung_tv_remote::control_client::http::request(
+        endpoint,
+        &"02".repeat(32),
+        "POST",
+        "/mcp",
+        Some(&request),
+        None,
+    )
+    .await
+    .unwrap();
+    assert_eq!(status, 200);
+    assert_eq!(value["id"], "native-verify");
+    assert_eq!(
+        value["result"]["tools"],
+        *samsung_tv_remote::server::mcp::catalog::tools()
+    );
+    assert_eq!(h.effects.probes.load(Ordering::SeqCst), 0);
+    assert_eq!(h.effects.writes.load(Ordering::SeqCst), 0);
+    h.close().await;
+}
+
+#[tokio::test]
+async fn probe_fast_path_preserves_pending_receipt_and_retained_observation_without_replay() {
+    let h = Harness::new().await;
+    let state = h.state().await;
+    let key = uuid::Uuid::new_v4().to_string();
+    let arguments = json!({"server_epoch":state["server_epoch"],"operation_key":key,"host":"synthetic-tv.invalid"});
+    h.effects.probe_wait.store(true, Ordering::SeqCst);
+    // A slow effect cannot make the initial receipt wait for its completion.
+    let pending = h.tool(2, "probe_tv", arguments.clone()).await;
+    assert_eq!(pending["state"], "pending");
+    assert_eq!(pending["operation_key"], key);
+    h.effects.probe_release.notify_one();
+    let done = h.mcp_done(2, &state["server_epoch"], &key).await;
+    let duplicate = h.tool(2, "probe_tv", arguments).await;
+    assert_eq!(duplicate, done);
+    assert_eq!(duplicate["operation_id"], pending["operation_id"]);
+    assert_eq!(h.effects.probes.load(Ordering::SeqCst), 1);
+    assert!(duplicate["result"]["fingerprint"].is_string());
+    assert!(duplicate["result"]["observation_id"].is_string());
+    h.close().await;
 }
 
 #[tokio::test]
@@ -238,6 +291,37 @@ async fn lost_receipts_cross_route_keys_private_lookup_and_uncertainty_do_not_re
     let uncertain = h.mcp_mutate("remote_action", json!({"device_id":device,"selection_generation":state["selection_generation"],"action":"VolumeUp"})).await;
     assert_eq!(uncertain["result"]["kind"], "uncertain");
     assert_eq!(h.effects.remote_attempts.load(Ordering::SeqCst), 2);
+    h.close().await;
+}
+
+#[tokio::test]
+async fn re_pair_after_certificate_change_requires_fresh_matching_confirmation_and_keeps_identity()
+{
+    let h = Harness::new().await;
+    let device = h.pair().await;
+    let state = h.state().await;
+    let old = h.mcp_mutate("probe_tv", json!({"host":"tv.local"})).await;
+    h.effects.changed_certificate.store(true, Ordering::SeqCst);
+    let fresh = h.mcp_mutate("probe_tv", json!({"host":"tv.local"})).await;
+    let observed = &fresh["result"];
+    assert_ne!(old["result"]["fingerprint"], observed["fingerprint"]);
+    let mut arguments = json!({"device_id":device,"host":"tv.local",
+        "attempt_id":observed["attempt_id"],"observation_id":observed["observation_id"],
+        "fingerprint":observed["fingerprint"],"confirm_fingerprint":old["result"]["fingerprint"],
+        "label":"Repaired synthetic TV","selection_generation":state["selection_generation"]});
+    let before = h.effects.pairs.load(Ordering::SeqCst);
+    let mut rejected_arguments = arguments.clone();
+    rejected_arguments["server_epoch"] = state["server_epoch"].clone();
+    rejected_arguments["operation_key"] = json!(uuid::Uuid::new_v4().to_string());
+    let rejected = h.tool(2, "pair_tv", rejected_arguments).await;
+    assert_eq!(rejected["error"]["code"], "invalid_confirmation");
+    assert_eq!(h.effects.pairs.load(Ordering::SeqCst), before);
+    arguments["confirm_fingerprint"] = observed["fingerprint"].clone();
+    let repaired = h.mcp_mutate("pair_tv", arguments).await;
+    assert_eq!(repaired["result"]["kind"], "tv_approved_and_saved");
+    assert_eq!(repaired["result"]["device_id"], device);
+    assert_eq!(h.effects.pairs.load(Ordering::SeqCst), before + 1);
+    assert_eq!(h.state().await["devices"].as_array().unwrap().len(), 1);
     h.close().await;
 }
 
@@ -419,6 +503,23 @@ async fn mutation_saturation_does_not_block_post_recovery_classification() {
     assert_eq!(blocked["state"], "unknown");
     assert_eq!(h.effects.discovery.load(Ordering::SeqCst), 0);
     drop(slow);
+    // Closing incomplete requests must return their reservations. Wait on
+    // the observable admission result, then exercise MCP through the same pool.
+    tokio::time::timeout(Duration::from_secs(2), async {
+        loop {
+            let status = h.json(2, "POST", "/v1/discoveries", json!({})).await.0;
+            if status != 429 {
+                assert_eq!(status, 400);
+                break;
+            }
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .unwrap();
+    let done = h.mcp_mutate("discover_tvs", json!({})).await;
+    assert_eq!(done["result"]["kind"], "discovered");
+    assert_eq!(h.effects.discovery.load(Ordering::SeqCst), 1);
     h.close().await;
 }
 

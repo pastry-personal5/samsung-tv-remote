@@ -134,6 +134,19 @@ impl Drop for Remote {
     }
 }
 impl Remote {
+    pub(crate) async fn mcp_connection(
+        &self,
+        intent: super::mcp::Intent,
+    ) -> Result<super::mcp::State, super::mcp::Error> {
+        if *self.closed.borrow() {
+            return Err(super::mcp::Error::Unavailable);
+        }
+        let _slot = self
+            .management
+            .try_acquire()
+            .map_err(|_| super::mcp::Error::Busy)?;
+        super::mcp::run(self.launcher.profile(), self.executable.clone(), intent).await
+    }
     pub async fn start(config: Config) -> Result<Arc<Self>, LaunchError> {
         let launcher = Launcher::development(&config.base)?;
         Self::start_launcher(config.executable, launcher).await

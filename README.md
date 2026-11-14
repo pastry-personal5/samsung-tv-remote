@@ -41,3 +41,9 @@ and archived plans.
 For setup, development, and validation, use the
 [contribution guide](docs/contribution-guide.md). Do not commit pairing tokens,
 TV addresses, or local-network captures.
+
+For updates, retained-bundle rollback, Disconnect → Stop → Trash removal,
+and recovery, see [installation and troubleshooting](docs/contribution-guide.md#install-and-update-the-macos-app).
+P2-M11 integration is active; signed, installed-client, accessibility and
+physical-TV acceptance remain tracked in the
+[acceptance review](docs/phase-2/milestone-11-review.md).

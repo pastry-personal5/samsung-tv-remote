@@ -43,7 +43,7 @@ macOS permissions, and unavoidable first-use consent.
 | P2-M8 | Control HTTP server | Same-executable on-demand server, complete authenticated API/events, fresh isolated profile and early GUI probe. | Done | [Overview](milestone-08-overview.md) · [Architecture](milestone-08-architecture.md) · [Review](milestone-08-review.md) |
 | P2-M9 | GUI API migration | Complete typed GUI client, outcome recovery and signed fresh-profile cutover. | In progress | [Overview](milestone-09-overview.md) · [Architecture](milestone-09-architecture.md) |
 | P2-M10 | Streamable HTTP MCP | Full supported setup and control operations through `/mcp`. | Active | [Overview](milestone-10-overview.md) · [Architecture](milestone-10-architecture.md) · [Implementation](milestone-10-implementation.md) |
-| P2-M11 | Integration and refactor completion | Cross-client, restart, packaging, security, accessibility, and hardware review; remove legacy control path. | Planned | [Overview](milestone-11-overview.md) · [Architecture](milestone-11-architecture.md) |
+| P2-M11 | Integration and refactor completion | Cross-client acceptance, signed lifecycle/upgrade/removal, boundary audit, accessibility and hardware review. | Active | [Overview](milestone-11-overview.md) · [Architecture](milestone-11-architecture.md) · [Acceptance matrix](milestone-11-acceptance.md) · [Implementation](milestone-11-implementation.md) · [Review](milestone-11-review.md) |
 
 Work in order. A milestone can start only when its required predecessor contract
 is stable; deferred verification must be recorded rather than assumed passed.
@@ -51,7 +51,14 @@ The owner's 2026-11-12 instruction to complete P2-M10 authorizes implementation
 against the stable M8/M9 service boundary while M9's native acceptance remains
 open. This exception permits development and isolated validation; it does not
 waive M9's dependent production/signing/credential gates or M10 installed-client,
-model-budget and Local Network evidence.
+model-budget and Local Network evidence. The later
+[owner decision](#owner-decisions) waives only the rows it names; model
+budgets are not waived.
+M11 implementation uses these stable contracts while preserving every dependent M9/M10
+gate. Its deterministic fixture preparation may proceed independently; signed
+integrated acceptance waits for the corresponding predecessor delivery and
+evidence. Implementing M11 does not accept or reassign unfinished M9/M10 work.
+
 The old planned IDs remain Dropped rather than being reused, as required by
 the [development process](../development-process.md). Each new milestone has
 an overview and architecture record before implementation.
@@ -74,6 +81,29 @@ an overview and architecture record before implementation.
   confirmation steps and typed validation as the GUI. An MCP tool's
   confirmation argument is not proof that a person approved it.
 
+## Owner decisions
+
+- **2026-11-14: evidence waiver.** A second disposable macOS account and a
+  separate-host LAN fixture are unavailable. The owner waives these rows across
+  M9, M10 and M11. Each is reported `waived`, never `passed`:
+
+  | Row | Substitute evidence | Residual risk |
+  | --- | --- | --- |
+  | Second account / fast user switching (M11 N5) | Deterministic cross-UID peer/owner rejection; per-user runtime-directory tests | Real session switching is unobserved. |
+  | Separate-host Local Network attribution, deny/revoke/restore (M9, M10, M11 N7) | Same-Mac fixture protocol evidence; observed target-TV traffic (M11 N10) | Denial/revoke recovery and server-process attribution are unproven natively. |
+  | Disposable-account production helper/client smoke (M10, M11 N8) | Signed isolated harness with isolated `CLAUDE_CONFIG_DIR`; development-namespace helper tests | Production identity/Keychain path is unobserved in a fresh account. |
+
+- **2026-11-14: removal scope.** M11 adds no prepare-to-remove feature. Removal
+  is the existing Disconnect, then Stop, then moving the bundle to Trash. That
+  sequence is tested and documented.
+  The native check (M11 N11) runs on the owner's signed installation. It is
+  hands-on, needs consent at that session and ends with Resume, Connect and
+  Verify.
+- **Pending: MCP budget.** M11 slice 1 measures what the installed client
+  actually shows the model. The owner then decides whether to trim the catalog
+  or re-baseline any gate it exceeds, and records that here. Phase 3 tool
+  additions wait for this decision.
+
 ## Phase exit criteria
 
 - The installed GUI and MCP client can each exercise every Phase 1 TV setup
@@ -91,7 +121,8 @@ an overview and architecture record before implementation.
   read and write operations, validate request targets, and do not leak tokens,
   private text, or TV addresses in logs.
 - The MCP tool catalog and ordinary results meet the M6 model-visible token
-  and workflow-call budgets in the installed Claude Code target, including
+  and workflow-call budgets, or a recorded owner re-baseline, in the installed
+  Claude Code target, including
   its all-tools-upfront fallback. Savings never remove safety preconditions,
   confirmation, or honest unknown/uncertain outcomes.
 - Routine GUI and configured MCP use needs no manual server command, port
@@ -105,7 +136,7 @@ an overview and architecture record before implementation.
 ## Deferred product features
 
 The prior Phase 2 plan for Sources, Apps, and Text Input is
-[archived](../archive/phase-2/phase-2.md), not implemented. Its research remains
-input for a later feature phase, after this server boundary is complete. No
+[archived](../archive/phase-2/phase-2.md), not implemented. Its scope is planned
+as [Phase 3](../phase-3/phase-3.md), after this server boundary is complete. No
 new source, app, text-input, SmartThings, Matter, or generic TV-state claim is
 part of this phase.

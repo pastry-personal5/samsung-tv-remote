@@ -1,7 +1,7 @@
 # P2-M10 implementation contract
 
 Status: Active. Initial transport/service freeze and enrollment controller;
-connection workflow and installed acceptance remain incomplete.
+native connection workflow implemented; installed acceptance remains incomplete.
 
 The owner's instruction to complete M10 permits development ahead of M9's
 native acceptance, as recorded in the [phase plan](phase-2.md). The
@@ -135,14 +135,18 @@ No installed MCP endpoint/helper or model-visible budget result is accepted
 from the initial code/fixtures. Claude Code 2.1.322 and user-scope JSON writer
 support were observed in isolated configuration; runtime/session selection and
 helper execution still require a real endpoint test. Initial mutation calls
-return immediate receipts; a bounded observation fast path, frozen corpus
-projection/call counts and actual schema conformance coverage remain to finish.
+return immediate receipts. Discover/probe perform one private operation read
+after admission to include an already available terminal observation without
+waiting, allocating a subscriber or resubmitting the command. All corpus inputs
+now conform to shipped schemas; historical result projections/call counts
+still require reconciliation with actual client-visible results.
 
 The initial enrollment controller persists disabled/enabled state independently
 of API-item presence. Fresh and existing profiles default disabled. Live
 management is GUI-only `GET /v1/mcp` and `POST /v1/mcp/enrollment`; changes carry
 current epoch, one UUID operation key, expected enrollment generation and an
-enabled flag. Matching retained last-key intent recovers its result; changed
+enabled flag. Matching retained last-key intent (including its original expected generation)
+recovers its result; changed
 intent conflicts and stale generations cannot regrant access. Routine identical
 Connect preserves its bearer. A new grant derives the MCP bearer with HMAC-SHA256
 over a versioned domain, profile, generation and fresh nonce using the protected
@@ -174,9 +178,11 @@ match before replacement or removal. Blocking edits retain that lock across
 cancellation. Isolated
 tests cover saved-but-ungranted configuration, failed removal after revocation,
 stale generations, original-key recovery, idempotent Connect/removal and
-relocation. GUI/client capability and scope preflight, installed lock
-interoperability, complete crash coverage and actual-client acceptance remain
-delivery work.
+relocation. The typed native-client/GUI now supplies explicit actions, confirmed
+repair, separate configuration/enrollment/endpoint facts and original-key retry.
+Conservative preflight is pinned to the isolated-verified 2.1.325 client writer
+and directory lock. Effective organization policy, complete crash coverage and
+actual-client acceptance remain delivery work; see the [review](milestone-10-review.md).
 
 Blocking enrollment transitions retain a duplicate of the lifetime owner lock,
 so HTTP cancellation/shutdown cannot overlap unfinished persistence with a new

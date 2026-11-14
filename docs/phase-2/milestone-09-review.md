@@ -48,6 +48,8 @@ predecessor handoff, namespaces and signing experiments.
 
 - Controlled separate-host Local Network attribution, denial/revocation and
   recovery; same-Mac fixture traffic does not prove these OS behaviors.
+  Waived on 2026-11-14 by [owner decision](phase-2.md#owner-decisions); it is
+  reported `waived`, not passed.
 - Signed native Wake/readiness/cancellation and the remaining visual parity
   cases, including draft conflicts and exact terminal-outcome review.
 - Native locked and interaction-required credential states and recovery using

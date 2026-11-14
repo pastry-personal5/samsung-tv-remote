@@ -594,6 +594,8 @@ projections so measured schemas and result channels match the shipped endpoint.
 Reuse M9 native evidence only for unchanged paths; Claude-launched attribution
 still requires its own evidence. An unavailable disposable account or separate
 LAN fixture leaves that lane open and M10 unaccepted until its gates pass.
+The 2026-11-14 [owner decision](phase-2.md#owner-decisions) later waived
+both lanes; they are reported `waived` with substitutes, not passed.
 
 Re-run the [M6 corpus proxy](milestone-06-mcp-budget.md) after schema changes.
 Actual client gates remain: catalog/instruction ≤1,900 tokens, ordinary receipt

@@ -2,6 +2,56 @@
 
 Status: Active
 
+- 2026-11-14 — Started P2-M11 implementation against the stable service
+  contracts. Added combined native-client/MCP guard, private recovery,
+  subscription and storage-fault fixtures; removal-sequence process coverage;
+  executable-inode publication locks and legacy post-quarantine launch checks
+  with rollback regressions. Prepared native acceptance runbooks and updated
+  installation/removal/recovery guidance. M11 is Active, not Done: predecessor
+  reliability, signed integration, actual-model budgets, accessibility and
+  hardware evidence remain open. See the
+  [implementation ledger](milestone-11-implementation.md) and
+  [review](milestone-11-review.md).
+
+- 2026-11-14 — Reviewed M10 configuration/enrollment recovery. Rollback now
+  retains a second concurrent writer's document instead of deleting it; both
+  in-place and atomic replacement races have deterministic coverage. Retained
+  enrollment keys now bind the original expected generation as well as the
+  enabled flag. See the [review follow-up](milestone-10-code-review.md#follow-up-implementation-review--2026-11-14).
+  Installed acceptance and earlier intermittent failures remain open.
+
+- 2026-11-14 — Continued P2-M10 with typed native connection controls,
+  client/scope preflight, separate authenticated endpoint verification,
+  confirmed all-session Disconnect and relocation repair, original-key retries,
+  observation fast paths and shipped-schema corpus reconciliation. Isolated
+  Claude Code 2.1.325 writer/header-entry and directory-lock checks passed;
+  actual CLI health checks connected through the dynamic helper to a cold-started
+  development server. The full suite passed 399 tests, with two later native
+  regressions passing focused checks; latest formatting and Clippy passed.
+  The complete shipped catalog proxy is substantially larger than the old
+  planning estimate; actual model budgets remain unmeasured. The owner confirmed
+  disposable-account/separate-host fixtures are unavailable. See the
+  [acceptance review](milestone-10-review.md); M10 remains Active.
+
+- 2026-11-14 — Reviewed the P2-M11 plan against current M10 state. Updated
+  predecessor facts: GUI connection actions and preflight are now implemented.
+  Recorded [owner decisions](phase-2.md#owner-decisions). Second-account,
+  separate-host and disposable-account production-helper rows are `waived`,
+  with substitutes. Removal becomes the tested Disconnect → Stop → Trash
+  sequence, with no new fence. The MCP budget is measured first, then the
+  owner decides to trim or re-baseline. Keyboard review runs now; VoiceOver is
+  blocked until scheduled. Rollback reuses the installer with the retained
+  bundle. M11 remains Planned.
+
+- 2026-11-14 — Planned P2-M11 against the implemented M8/M9 boundary and active
+  M10 ledger. Added staged delivery, predecessor gates, cross-client fault
+  coverage, installer/rollback race review and a proposed serialized
+  prepare-to-remove flow that preserves TV data and stopped/disabled state.
+  Added an [acceptance matrix](milestone-11-acceptance.md) for deterministic,
+  signed native, installed-client, accessibility and hardware evidence. The
+  legacy GUI adapter is already removed; M11 audits the boundary. M11 remains
+  Planned; no M9/M10 acceptance, source implementation or native run is claimed.
+
 - 2026-11-13 — Reviewed P2-M10 implementation and repaired original-intent
   Connect recovery after a saved entry/lost reply, request-ID correlation on
   duplicate-member rejection and bounded Unicode inspection labels. Added

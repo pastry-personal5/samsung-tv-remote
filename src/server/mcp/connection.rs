@@ -79,11 +79,7 @@ impl Backend for Workflow<'_> {
         serde_json::from_value(value).map_err(|_| Cause::InvalidResponse)
     }
     fn entry(&self, url: &str) -> Result<Entry, Cause> {
-        let fake = match &self.connection.profile {
-            Profile::Development(path) => Some(path.as_path()),
-            Profile::Control => None,
-        };
-        Entry::new(&self.connection.executable, fake, url).map_err(Cause::Configuration)
+        self.connection.entry(url).map_err(Cause::Configuration)
     }
     async fn edit(&self, expected: Option<Entry>, desired: Option<Entry>) -> Result<(), Cause> {
         let path = self.connection.configuration.clone();
@@ -100,6 +96,14 @@ impl Backend for Workflow<'_> {
     }
 }
 impl Connection {
+    /// This app's exact client entry for an enrolled endpoint URL.
+    pub fn entry(&self, url: &str) -> Result<Entry, client_config::Error> {
+        let fake = match &self.profile {
+            Profile::Development(path) => Some(path.as_path()),
+            Profile::Control => None,
+        };
+        Entry::new(&self.executable, fake, url)
+    }
     /// Only an explicit Connect may invoke this. A saved entry is reported
     /// separately from enrollment; endpoint/client verification is subsequent.
     pub async fn connect(

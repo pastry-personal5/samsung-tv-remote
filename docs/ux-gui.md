@@ -52,6 +52,26 @@ GUI may request Connect once for an idle, disconnected saved selection. It
 skips empty, ready or busy state and does not repeat this on reattachment.
 Lost responses recover through lookup; no action is automatically replayed.
 
+Settings → Servers also contains Claude Code connection management. It starts
+with **Check connection settings**, which inspects configuration and protected
+enrollment without starting a missing server or granting access. **Connect
+Claude Code** checks the supported client, known project/local conflicts and
+restrictive/managed configuration, saves the token-free user entry, then grants
+access. A changed helper at the same trusted endpoint requires **Review
+connection repair** and an explicit replacement confirmation. A concurrently
+changed entry is preserved.
+
+Saved configuration, enabled access and app-side endpoint verification have
+separate labels. **Verify MCP endpoint** performs an authenticated catalog read;
+it may start an enrolled server, respects intentional Stop, and does not prove
+that Claude has attached. Actual-client attachment remains explicitly unverified.
+**Disconnect Claude Code** requires confirmation that all Claude sessions lose
+access. Revocation precedes entry removal; admitted TV effects may finish and
+GUI control remains available. Partial failures show acknowledged progress,
+including unknown revocation, with an explicit retry using the original request
+key. Recheck never enables access. The development probe requires an explicitly
+isolated `CLAUDE_CONFIG_DIR` before connection management is available.
+
 ## Remote View
 
 Remote View contains only the bundled visual remote image. Clickable regions
@@ -100,7 +120,7 @@ visible names and text equivalents for status colors.
 
 ## Discovery and pairing in Settings
 
-The Settings Sidebar has Discovery and Wake on LAN. The Discovery page groups TV
+The Settings Sidebar has Discovery, Wake on LAN and Servers. The Discovery page groups TV
 List, Discovery and Pairing, and Guidance cards.
 
 TV List shows Saved TVs with a selection radio. The selected Saved TV row offers

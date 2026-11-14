@@ -75,6 +75,17 @@ pub enum Message {
     RequestStopServer,
     ConfirmStopServer,
     CancelStopServer,
+    CheckMcp,
+    VerifyMcp,
+    ConnectMcp,
+    RequestRepairMcp,
+    ConfirmRepairMcp,
+    CancelRepairMcp,
+    RequestDisconnectMcp,
+    ConfirmDisconnectMcp,
+    CancelDisconnectMcp,
+    RetryMcp,
+    McpFinished(Result<crate::control_client::mcp::State, crate::control_client::mcp::Error>),
     RemoteManagementFinished(
         Result<
             crate::control_client::port::ManagementReply,

@@ -50,17 +50,30 @@ the completion authority; this ledger records progress toward the whole goal.
   Removal is safely retryable when the expected entry is already absent.
 
 The [contract record](milestone-10-contract.md) fixes mappings, limits, response
-classes and projection choices. The configuration writer/coordinator is not yet
-wired to a GUI connection action. Installed-client lock interoperability,
-managed/local/project-scope preflight and signed production helper acceptance
-remain open; the writer must not be enabled for owner configuration until that
-preflight is implemented and verified.
+classes and projection choices. On 2026-11-14 the coordinator was wired through
+the typed native-client port to explicit GUI Check/Connect/Verify/Disconnect
+and confirmed relocation repair. Partial failures retain the original management
+intent for explicit retry. Preflight checks the supported client version,
+known local/project conflicts and restrictive/managed files; isolated Claude
+Code 2.1.325 tests establish writer/header-entry and directory-lock compatibility.
+The development probe requires an explicitly isolated Claude configuration.
+App-side authenticated catalog verification remains distinct from actual Claude
+attachment. See [connection guidance](milestone-10-connection.md) for limitations.
+
+Discovery/probe now inspect their admitted private operation once before
+projection, returning an already available terminal observation without any
+subscriber, wait allocation or resubmission. Slow effects still return pending
+receipts immediately. Corpus inputs are checked against all 15 shipped schemas;
+certificate-change re-pair coverage keeps device identity and rejects a stale
+fingerprint confirmation before Pairing.
 
 ## Implementation review
 
 The [2026-11-13 code review](milestone-10-code-review.md) repairs original-intent
 Connect recovery, unambiguous IDs on duplicate-member RPC rejection and bounded
-inspection labels. Signed/native/client acceptance remains open.
+inspection labels. The 2026-11-14 follow-up also preserves a second writer during configuration
+rollback and binds enrollment retry keys to the original expected generation.
+Signed/native/client acceptance remains open.
 
 ## Verification record
 
@@ -98,24 +111,44 @@ ownership-lock assertion at `enrollment.rs` immediately after dropping the last
 guard; focused and subsequent full runs passed. No root cause is established.
 See the [review verification record](milestone-10-code-review.md#validation).
 
+The 2026-11-14 delegated full run passed 399 tests (195 unit and 18
+server-process cases included), with captured zero exit statuses. Two native
+regressions added afterward passed focused execution; latest-tree formatting,
+Clippy and whitespace checks also passed. The initial Settings panel was rendered and visually reviewed
+in an isolated development profile. Claude Code 2.1.325 writer/header-entry and
+directory-lock checks passed in disposable configuration. Actual CLI `mcp get`
+and `mcp list` then reported Connected through the destination-bound dynamic
+helper against the actual development server, cold-started with the GUI closed
+and stopped cleanly afterward. This does not establish signed production
+identity or model tool execution. A fresh isolated
+Claude auth check has no logged-in model session, so actual-model budgets are
+still unavailable. The earlier reproduced ownership-lock failure remains an
+unresolved reliability follow-up despite the final passing suite. See the
+[acceptance review](milestone-10-review.md) for the full scope and remaining gates.
+
 ## Work remaining
 
-1. Finish protocol/schema and saturation/cancellation coverage, observation fast
-   paths and projection/corpus reconciliation; measure actual client behavior.
+1. Finish the acceptance coverage audit and reconcile actual client-visible
+   result channels/workflow costs with the historical corpus projections.
 2. Finish enrollment crash/race coverage and configuration publication fault
    coverage; verify protected helper fencing across subprocesses and the
-   installed client's actual lock protocol before enabling configuration edits.
+   actual-client refresh/rotation behavior. Installed 2.1.325 directory-lock
+   interoperability now has isolated evidence.
 3. Complete signed-helper cold-start, termination/deadline, hostile-peer and
    credential-rotation client evidence, including the real production identity.
-4. Wire token-free configuration/coordinator through verified client/scope
-   preflight and typed GUI Connect/Disconnect; expose separate
-   saved/verified/client-attached states, repair and relocation paths.
+4. Review the new native connection controls visually and in signed production;
+   effective organization policy and future project overrides are not inferred
+   from the conservative file preflight.
 5. Execute the nine actual-client corpus workflows with tool search on/off and
    all-tool recovery parity in the signed isolated harness. Record real visible
    definitions/results, calls/tokens and justified budget exceptions.
 6. Complete production-helper/client smoke in a disposable macOS account,
    M9-dependent signing/credential gates and separate-host native attribution
    evidence. Same-Mac synthetic success is insufficient for Local Network consent.
-7. Run all required Cargo checks, write the final requirement-by-requirement
-   `milestone-10-review.md`, and update current architecture/UX/connection guidance
-   and the M11 handoff. No unchecked gate may be reported Done.
+7. Resolve the reproduced intermittent ownership-lock release failure and finish
+   the requirement-by-requirement [acceptance review](milestone-10-review.md).
+   The 2026-11-14 [owner decision](phase-2.md#owner-decisions) later waived the
+   disposable-account production-helper and separate-host lanes. They are
+   reported `waived` with substitutes, not passed.
+   Current architecture/UX/connection guidance is updated. M11 receives the
+   unresolved predecessor gates; no unchecked gate may be reported Done.

@@ -59,3 +59,36 @@ Final delegated validation passed `cargo fmt --all -- --check`,
 tests, nine protocol tests and 18 server-process tests. The earlier ownership
 assertion did not recur. No production or installed-client acceptance is
 inferred from automated tests.
+
+## Follow-up implementation review — 2026-11-14
+
+Two additional defects were repaired in the current M10 working tree:
+
+1. **Rollback could discard a second concurrent configuration writer.** After
+   detecting a publication race, the writer checked that its document was still
+   at the destination, then swapped the displaced document back and unconditionally
+   deleted the temporary file. Another writer between that check and swap could
+   therefore lose its settings. Rollback now verifies both inode identity and
+   exact bytes of the displaced file before cleanup. A different or unreadable
+   document remains named for recovery and is reported through the existing
+   partial-progress error. Deterministic checkpoints exercise both in-place edits
+   and atomic replacement at this interleaving.
+2. **Enrollment last-key recovery did not compare the full intent.** A retained
+   key with the same enabled flag but a different expected generation incorrectly
+   returned success. Each durable transition advances generation exactly once,
+   so recovery now compares the supplied expected generation with the retained
+   generation minus one. Changed intent returns `operation_key_conflict` without
+   modifying state. Tests cover both enable and disable, including maximum-counter
+   input, while preserving exact original-request recovery.
+
+Existing edits are preserved. Signed/native/client acceptance, actual-model
+budgets and the previously intermittent ownership/helper failures remain open;
+these repairs do not establish their cause or accept the milestone.
+
+Delegated validation passed both focused regressions, `cargo fmt --all -- --check`,
+`cargo clippy --all-targets -- -D warnings`, `git diff --check` and the full
+`cargo test` suite: 199 unit tests and all integration suites passed, including
+18 server-process tests, with zero failures and exit status zero. The full run
+used the documented isolated loopback/process permissions after the sandboxed
+run encountered permission errors. The known intermittent failures did not
+recur; a passing run does not establish their root cause.

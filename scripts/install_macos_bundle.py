@@ -5,7 +5,7 @@ No profile, API or TV credentials are opened. SIGTERM also works when a live
 server's signature was invalidated by an earlier in-place installation.
 """
 import argparse
-from contextlib import contextmanager
+from contextlib import contextmanager, ExitStack
 from dataclasses import dataclass
 import fcntl
 import os
@@ -149,6 +149,29 @@ def install_lock(parent):
         os.close(descriptor)
 
 
+@contextmanager
+def publication_lock(bundle):
+    """Lock the executable inode, so renaming a bundle never drops the fence."""
+    executable = bundle / "Contents/MacOS" / BINARY
+    try:
+        descriptor = os.open(executable, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+    except FileNotFoundError:
+        # A damaged bundle without an executable has no entrypoint to fence
+        # and must stay replaceable by a verified candidate.
+        yield
+        return
+    try:
+        if not stat.S_ISREG(os.fstat(descriptor).st_mode):
+            raise InstallError("Unsafe publication executable.")
+        try:
+            fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError as error:
+            raise InstallError("App/server relaunched during settlement; installation aborted.") from error
+        yield
+    finally:
+        os.close(descriptor)
+
+
 def install(source, destination, timeout=30.0):
     if (source == destination or source in destination.parents
             or destination in source.parents):
@@ -162,20 +185,34 @@ def install(source, destination, timeout=30.0):
         backup = None
         keep_stage = False
         published = False
+        publication = ExitStack()
         try:
             # Copy and verify before interrupting any running app or server.
             command(["/usr/bin/ditto", "--noacl", str(source), str(staged)])
             verify_bundle(staged)
+            # New entrypoints take a shared inode lock for their entire life.
+            # Fence the candidate before publication and the old inode after
+            # settlement. A launch in between causes a safe abort. Keep both
+            # locks through verification/rollback, including bundle renames.
+            publication.enter_context(publication_lock(staged))
             settle(destination, timeout)
-            ensure_idle(destination)
             if destination.exists():
                 if not destination.is_dir() or destination.is_symlink():
                     raise InstallError("Destination is not an application directory.")
+                publication.enter_context(publication_lock(destination))
+            ensure_idle(destination)
+            if destination.exists():
                 previous = Path(tempfile.mkdtemp(prefix=".samsung-tv-remote.previous-",
                                                  suffix=".noindex", dir=destination.parent))
                 backup = previous / destination.name
                 destination.rename(backup)
             try:
+                # Also inspect legacy processes after removing their launch path.
+                # Pre-publication builds do not participate in executable locks.
+                # An observed late launch restores the unchanged old inode.
+                ensure_idle(destination)
+                if backup is not None:
+                    ensure_idle(backup)
                 staged.rename(destination)
                 published = True
                 verify_bundle(destination)
@@ -202,6 +239,7 @@ def install(source, destination, timeout=30.0):
                 print(f"Previous bundle retained: {backup}")
             print("Launch with make run-mac. Existing server Stop state and credentials are preserved.")
         finally:
+            publication.close()
             if not keep_stage:
                 shutil.rmtree(stage)
 

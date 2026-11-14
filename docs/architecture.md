@@ -8,6 +8,13 @@ Iced starts. P2-M9's source cutover is implemented; its signed production
 acceptance remains open. See the [implementation ledger](phase-2/milestone-09-implementation.md)
 for the failed self-signed rebuild gate and current native evidence. MCP remains
 P2-M10 work in the [target architecture](phase-2/target-architecture.md).
+The shared listener now implements `/mcp`, with the same service admission,
+private operation history and limits as `/v1`. Native connection controls use
+`control_client/mcp.rs`; presentation receives typed configuration/enrollment
+facts and never edits Claude files or enrollment records itself. Client/scope
+preflight precedes explicit Connect, while endpoint verification is a separate
+authenticated catalog read. Installed-client and model-budget acceptance remain
+open in the [M10 review](phase-2/milestone-10-review.md).
 
 The headless Tokio runtime in `application/runtime.rs` owns TV workflow,
 effects and retained operations in the server process. Iced owns local windows,
@@ -21,6 +28,12 @@ Samsung TV Remote is one Rust package. Server composition connects
 `application → domain` policy to `infrastructure → application/domain` adapters.
 Presentation uses `control_client` and pure shared values. `main.rs` dispatches
 modes and composes the client; `server/process.rs` composes production adapters.
+Before dispatch, bundled entrypoints retain a shared executable-inode lock.
+The installer exclusively locks old/staged executables through replacement and
+rollback; concurrent launches fail before opening profiles. Legacy upgrade
+handoff also uses post-quarantine process checks. This publication guard owns
+no TV policy, storage schema or removal state; see the
+[M11 ledger](phase-2/milestone-11-implementation.md).
 UI code never constructs Samsung wire frames or owns a TV socket; application
 policy never imports Iced or macOS APIs. The required GUI boundary check rejects
 runtime/adapters, raw service receipts and persistence access from presentation.

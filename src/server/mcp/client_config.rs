@@ -138,6 +138,10 @@ pub fn inspect(path: &Path) -> Result<Option<Value>, Error> {
         .cloned())
 }
 
+pub(super) fn inspect_document(path: &Path) -> Result<Value, Error> {
+    document(read(path)?.as_ref())
+}
+
 /// Serialize whole app workflows, including the gap between durable disable
 /// and entry removal. An advisory inode lock survives no process crash and is
 /// deliberately never unlinked, so another process cannot lock a new inode.
@@ -255,8 +259,9 @@ impl Drop for Lock {
 
 #[derive(Clone, Copy)]
 enum Stage {
-    BeforeCompare,
-    BeforePublish,
+    Compare,
+    Publish,
+    Rollback,
 }
 fn rename(
     parent: &File,
@@ -373,11 +378,11 @@ fn edit_observed(
         }
         file.write_all(&bytes).map_err(|_| Error::Unavailable)?;
         file.sync_all().map_err(|_| Error::Unavailable)?;
-        observe(Stage::BeforeCompare);
+        observe(Stage::Compare);
         if !lock.valid() || !same(original.as_ref(), read(path)?.as_ref()) {
             return Err(Error::Conflict);
         }
-        observe(Stage::BeforePublish);
+        observe(Stage::Publish);
         rename(
             &parent,
             temporary.file_name().ok_or(Error::Unsafe)?,
@@ -406,6 +411,9 @@ fn edit_observed(
                         && current.identity.0 == published.dev()
                         && current.identity.1 == published.ino()
                 });
+            if ours {
+                observe(Stage::Rollback);
+            }
             if ours
                 && rename(
                     &parent,
@@ -415,8 +423,22 @@ fn edit_observed(
                 )
                 .is_ok()
             {
-                let _ = parent.sync_all();
-                let _ = std::fs::remove_file(&temporary);
+                // Another noncooperating writer can change the target after
+                // the check above. The swap preserves that document; delete
+                // the displaced file only when it is still exactly ours.
+                let displaced = read(&temporary).map_err(|_| Error::Recovery(temporary.clone()))?;
+                let still_ours = displaced.is_some_and(|current| {
+                    current.bytes == bytes
+                        && current.identity.0 == published.dev()
+                        && current.identity.1 == published.ino()
+                });
+                parent
+                    .sync_all()
+                    .map_err(|_| Error::Recovery(temporary.clone()))?;
+                if !still_ours {
+                    return Err(Error::Recovery(temporary));
+                }
+                std::fs::remove_file(&temporary).map_err(|_| Error::Recovery(temporary.clone()))?;
                 return Err(Error::Conflict);
             }
             return Err(Error::Recovery(temporary));
@@ -481,7 +503,7 @@ mod tests {
         std::fs::write(&path, b"{\"original\":true}").unwrap();
         let concurrent = json!({"original":true,"concurrent":"keep"});
         let result = edit_observed(&path, None, Some(&entry()), |stage| {
-            if matches!(stage, Stage::BeforePublish) {
+            if matches!(stage, Stage::Publish) {
                 std::fs::write(&path, serde_json::to_vec(&concurrent).unwrap()).unwrap();
             }
         });
@@ -489,6 +511,33 @@ mod tests {
         let current: Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
         assert_eq!(current, concurrent);
     }
+    #[test]
+    fn a_second_writer_racing_rollback_is_retained_for_recovery() {
+        for replace_inode in [false, true] {
+            let directory = tempfile::tempdir().unwrap();
+            let path = directory.path().join(".claude.json");
+            std::fs::write(&path, b"{\"original\":true}").unwrap();
+            let first = br#"{"first_writer":"keep"}"#;
+            let second = br#"{"second_writer":"keep too"}"#;
+            let result = edit_observed(&path, None, Some(&entry()), |stage| match stage {
+                Stage::Publish => std::fs::write(&path, first).unwrap(),
+                Stage::Rollback if replace_inode => {
+                    let next = directory.path().join("second.json");
+                    std::fs::write(&next, second).unwrap();
+                    std::fs::rename(next, &path).unwrap();
+                }
+                Stage::Rollback => std::fs::write(&path, second).unwrap(),
+                _ => {}
+            });
+            let Err(Error::Recovery(recovery)) = result else {
+                panic!("racing document must remain available: {result:?}");
+            };
+            assert_eq!(std::fs::read(&path).unwrap(), first);
+            assert_eq!(std::fs::read(recovery).unwrap(), second);
+            assert!(!directory.path().join(".claude.json.lock").exists());
+        }
+    }
+
     #[test]
     fn malformed_duplicate_or_symlinked_configuration_is_not_modified() {
         let directory = tempfile::tempdir().unwrap();
@@ -540,7 +589,7 @@ mod tests {
         let path = directory.path().join(".claude.json");
         let concurrent = b"{\"concurrent\":true}";
         let result = edit_observed(&path, None, Some(&entry()), |stage| {
-            if matches!(stage, Stage::BeforePublish) {
+            if matches!(stage, Stage::Publish) {
                 std::fs::write(&path, concurrent).unwrap();
             }
         });
@@ -555,7 +604,7 @@ mod tests {
         let path = directory.path().join(".claude.json");
         let lock = directory.path().join(".claude.json.lock");
         let result = edit_observed(&path, None, Some(&entry()), |stage| {
-            if matches!(stage, Stage::BeforeCompare) {
+            if matches!(stage, Stage::Compare) {
                 std::fs::rename(&lock, directory.path().join("old-lock")).unwrap();
                 std::fs::create_dir(&lock).unwrap();
             }
@@ -573,7 +622,7 @@ mod tests {
         std::fs::write(&path, b"{}").unwrap();
         std::fs::write(&target, b"{\"keep\":true}").unwrap();
         let result = edit_observed(&path, None, Some(&entry()), |stage| {
-            if matches!(stage, Stage::BeforePublish) {
+            if matches!(stage, Stage::Publish) {
                 std::fs::remove_file(&path).unwrap();
                 std::os::unix::fs::symlink(&target, &path).unwrap();
             }

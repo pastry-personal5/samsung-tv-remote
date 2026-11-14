@@ -13,7 +13,7 @@ impl App {
         use ::iced::widget::{button, column, container, row, text};
         use ::iced::{Alignment, Length};
         let status = self.remote_status.as_ref();
-        let enabled = !self.remote_management && !self.client_exited;
+        let enabled = !self.remote_management && !self.mcp_pending && !self.client_exited;
         let mut line = row![text(
             status
                 .map(super::remote_probe::status_text)
@@ -90,7 +90,9 @@ impl App {
                 row![button("Cancel").on_press(Message::CancelStopServer),button("Stop for all clients").on_press_maybe(enabled.then_some(Message::ConfirmStopServer))].spacing(8),
             ].spacing(6));
         }
-        container(panel).width(Length::Fill).into()
+        container(panel.push(self.mcp_panel()))
+            .width(Length::Fill)
+            .into()
     }
     pub(super) fn refresh_client_controls(&mut self) {
         let available = !self.client_exited
@@ -115,7 +117,7 @@ impl App {
             self.stop_confirmation = None;
             return Task::none();
         }
-        if self.remote_management {
+        if self.remote_management || self.mcp_pending {
             return Task::none();
         }
         let intent = match message {

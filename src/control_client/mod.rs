@@ -2,6 +2,7 @@
 pub mod background;
 pub mod bootstrap;
 pub mod http;
+pub mod mcp;
 pub mod model;
 pub mod port;
 pub mod projection;

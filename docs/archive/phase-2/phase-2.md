@@ -3,8 +3,8 @@
 Status: Archived
 
 Superseded by the [server-first Phase 2 plan](../../phase-2/phase-2.md).
-The Sources, Apps, and Text Input research remains available for a future
-feature phase; these milestones were never implemented.
+These milestones were never implemented; their scope is planned as
+[Phase 3](../../phase-3/phase-3.md) (P3-M1 to P3-M5).
 
 ## Goal
 

@@ -6,6 +6,7 @@ mod cursor;
 pub mod enrollment;
 pub mod helper;
 pub mod management;
+pub mod preflight;
 pub mod protocol;
 mod results;
 mod tools;

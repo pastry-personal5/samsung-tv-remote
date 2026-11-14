@@ -13,7 +13,7 @@ consideration are in the [research note](research/discovery-pairing-wake-ux.md).
 | --- | --- | --- |
 | Main window | Sidebar | Icon destinations in order: Power, Remote, Sources, Apps, Text Input. Settings button at the bottom. |
 | Main window | Main Pane | One titled primary view above the Messages split bar and Global Messages Pane. Remote View opens by default. |
-| Settings Window | Settings Sidebar | Discovery, then Wake on LAN. |
+| Settings Window | Settings Sidebar | Discovery, Wake on LAN, then Servers. |
 | Settings Window | Settings Main Pane | The selected settings page, scrolled independently from the main window. |
 
 The main window opens to Remote View, including on first launch and when no TV
@@ -42,6 +42,7 @@ shortcut chrome.
 | --- | --- |
 | Discovery | TV List card for Saved TVs and unsaved candidates; Discovery and Pairing card with Discover TVs and manual host entry; Guidance card. |
 | Wake on LAN | Wake Configuration card with wired and Wi-Fi MAC fields and Wired, Wi-Fi, or Disabled choice; Guidance card. |
+| Servers | Control server status/lifecycle controls and explicit Claude Code connection management. Configuration, enrollment, endpoint verification and actual-client evidence are separate. |
 
 The Discovery page keeps Saved TVs separate from unsaved candidates. A Saved TV
 row can be selected; the selected row offers Check TV, Re-pair after a matching

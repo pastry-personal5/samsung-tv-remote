@@ -1,6 +1,7 @@
 """Installer regressions use temporary bundles and fake processes/signatures."""
 from contextlib import ExitStack
 import importlib.util
+import fcntl
 import io
 import os
 from pathlib import Path
@@ -130,7 +131,7 @@ class InstallationTests(unittest.TestCase):
         self.assertEqual(self.contents(self.source), "new")
         self.assertEqual(self.contents(self.previous()[0]), "old")
         self.assertEqual([event[0] if isinstance(event, tuple) else event for event in self.events],
-                         ["verify", "copy", "verify", "settle", "idle", "verify"])
+                         ["verify", "copy", "verify", "settle", "idle", "idle", "idle", "verify"])
         self.assertFalse(list(self.destination.parent.glob(".samsung-tv-remote.install-*.noindex")))
         self.kill.assert_not_called()
 
@@ -139,6 +140,64 @@ class InstallationTests(unittest.TestCase):
         installer.install(self.source, self.destination)
         self.assertEqual(self.contents(self.destination), "new")
         self.assertEqual(self.previous(), [])
+
+    def test_launch_after_settlement_aborts_before_renaming_the_old_bundle(self):
+        executable = self.destination / "Contents/MacOS/samsung-tv-remote"
+        with executable.open("rb") as launched:
+            fcntl.flock(launched, fcntl.LOCK_SH | fcntl.LOCK_NB)
+            with self.assertRaisesRegex(installer.InstallError, "relaunched"):
+                installer.install(self.source, self.destination)
+            self.assertEqual(self.contents(self.destination), "old")
+            self.assertEqual(self.previous(), [])
+
+    def test_legacy_launch_in_check_rename_interval_restores_old_bundle(self):
+        for check in (2, 3):
+            with self.subTest(check=check):
+                self.idle.side_effect = [None] * (check - 1) + [installer.InstallError("late legacy launch")]
+                with self.assertRaisesRegex(installer.InstallError, "previous bundle restored"):
+                    installer.install(self.source, self.destination)
+                self.assertEqual(self.contents(self.destination), "old")
+                self.assertEqual(self.previous(), [])
+
+    def test_publication_blocks_launch_on_old_and_new_inodes_through_rollback(self):
+        original = Path.rename
+
+        def assert_fenced(bundle):
+            with (bundle / "Contents/MacOS/samsung-tv-remote").open("rb") as launched:
+                with self.assertRaises(BlockingIOError):
+                    fcntl.flock(launched, fcntl.LOCK_SH | fcntl.LOCK_NB)
+
+        def observed_rename(path, target):
+            assert_fenced(path)
+            result = original(path, target)
+            assert_fenced(target)
+            return result
+
+        self.verify.side_effect = [None, None, installer.InstallError("installed signature")]
+        with patch.object(Path, "rename", new=observed_rename):
+            with self.assertRaisesRegex(installer.InstallError, "previous bundle restored"):
+                installer.install(self.source, self.destination)
+        # Neither failure nor rollback leaves a lock behind.
+        with installer.publication_lock(self.destination):
+            self.assertEqual(self.contents(self.destination), "old")
+
+    def test_retained_bundle_rollback_preserves_unrelated_profile_and_stop_state(self):
+        profile = self.root / "profile"
+        profile.mkdir()
+        for name in ("devices.json", "stopped.json", "mcp-enrollment.json", "trust.json"):
+            (profile / name).write_text("retained synthetic state")
+        before = {p.name: p.read_bytes() for p in profile.iterdir()}
+        installer.install(self.source, self.destination)
+        retained = self.previous()[0]
+        installer.install(retained, self.destination)
+        self.assertEqual(self.contents(self.destination), "old")
+        self.assertEqual({p.name: p.read_bytes() for p in profile.iterdir()}, before)
+        self.assertTrue(retained.exists())
+
+    def test_damaged_destination_without_executable_is_still_replaced(self):
+        (self.destination / "Contents/MacOS/samsung-tv-remote").unlink()
+        installer.install(self.source, self.destination)
+        self.assertEqual(self.contents(self.destination), "new")
 
     def test_invalid_source_never_closes_the_running_app(self):
         self.verify.side_effect = installer.InstallError("invalid source signature")

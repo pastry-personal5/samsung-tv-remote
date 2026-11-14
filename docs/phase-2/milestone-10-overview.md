@@ -160,6 +160,12 @@ does not accept protocol, signed-client or token-budget evidence.
 The [implementation contract](milestone-10-contract.md) and
 [implementation ledger](milestone-10-implementation.md) track the active work
 and evidence without treating the planning review as delivery acceptance.
+The [2026-11-14 acceptance review](milestone-10-review.md) maps every checklist
+item to implementation and outstanding evidence. Native connection controls
+and conservative preflight are implemented; see [connection guidance](milestone-10-connection.md).
+The owner confirmed the disposable-account and separate-host fixtures are
+unavailable for this run. Required installed/native/model-budget evidence
+remains open, so this milestone remains Active.
 
 ## References
 

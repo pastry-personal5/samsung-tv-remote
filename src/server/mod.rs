@@ -11,3 +11,4 @@ pub mod mcp;
 pub mod process;
 pub mod production;
 pub mod profile;
+mod publication;

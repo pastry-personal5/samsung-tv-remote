@@ -93,6 +93,9 @@ pub struct Launcher {
     verifier: Arc<dyn PeerVerifier>,
 }
 impl Launcher {
+    pub(crate) fn profile(&self) -> Profile {
+        self.profile.clone()
+    }
     pub fn development(base: &Path) -> Result<Self, LaunchError> {
         Self::new(Profile::development(base).map_err(LaunchError::File)?)
     }

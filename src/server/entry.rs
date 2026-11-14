@@ -213,6 +213,10 @@ where
 /// sanitized status only. The dedicated MCP header mode intentionally emits
 /// one client Authorization object; TV pairing secrets are never printed.
 pub fn dispatch(arguments: &[OsString]) -> Option<i32> {
+    if super::publication::enter().is_err() {
+        eprintln!("{}", json!({"error":"bundle_replacement_in_progress"}));
+        return Some(1);
+    }
     let mode = match parse(arguments) {
         Ok(Mode::Gui) => return None,
         Ok(mode) => mode,

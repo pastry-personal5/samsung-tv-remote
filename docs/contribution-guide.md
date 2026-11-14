@@ -53,6 +53,59 @@ Applications directory. Only the application bundle is replaced. Profiles,
 pairing/API credentials and intentional server Stop markers are preserved.
 Concurrent installers are rejected. Avoid launching the app during replacement.
 
+M11 bundle entrypoints hold a shared executable lock for their process lifetime.
+The installer exclusively locks both old and staged executable inodes through
+publication, verification and rollback. A concurrent relaunch either aborts
+installation before replacement or exits before opening a profile; retry after
+installation completes. Legacy builds do not take this startup lock; process
+checks after the old bundle is moved aside catch observed late legacy launches
+and restore it. Signed old/new upgrade acceptance remains open.
+
+To roll back, pass the printed retained `.app` as the source to
+`python3 scripts/install_macos_bundle.py install SOURCE DESTINATION`, with both
+paths absolute. This verifies and settles processes just like an upgrade.
+It preserves the current profile, credentials, Stop and enrollment; it is not
+a data rollback. Each install retains another previous bundle. Keep the newest
+recovery bundle and manually remove older retained bundles after review.
+
+### Removal and recovery
+
+In Settings → Servers, first **Disconnect Claude Code**, then **Stop** and
+wait for owner settlement. Then move only the application bundle to Trash.
+Disconnect durably disables MCP before removing the unchanged managed entry;
+an externally changed entry reports a conflict while leaving access disabled.
+Recheck ambiguous progress and preserve changed settings for explicit repair.
+Disconnect also works while the owner is already stopped.
+
+Deleting the bundle alone does not stop an already detached owner. Removal
+keeps TV records, trust, Keychain credentials, intentional Stop and disabled MCP
+enrollment. Reinstalling the bundle does not clear those controls. To restore
+service explicitly **Resume**, **Connect Claude Code**, then **Verify**.
+Endpoint verification is separate from observing Claude attachment. Full data
+and credential erasure is outside this removal sequence. The hands-on signed
+removal check is still pending; see the
+[N11 runbook](phase-2/milestone-11-native-runbook.md#hands-on-removal-and-recovery--n11).
+
+### Connection troubleshooting
+
+- **Stopped:** explicitly Resume. Ordinary reopen, Verify and header refresh
+  preserve an intentional Stop. A durable Stop acknowledgment and observed
+  owner settlement are separate facts.
+- **Crashed/unavailable:** reconnect from a fresh authenticated snapshot. An
+  interrupted or expired operation can be unknown; do not replay it because
+  its receipt is missing. Any new TV action needs explicit intent/current guards.
+- **Incompatible build:** use the explicit restart action after reviewing its
+  all-client effect; reopening cannot replace an incompatible owner.
+- **Credentials blocked:** denied, locked and interaction-required states need
+  their displayed explicit recovery. Routine retries never request native
+  access dialogs. Follow the access-review procedure below when applicable.
+- **Local Network unavailable:** review macOS permission and network access,
+  then explicitly reconnect/re-probe. A successful loopback endpoint probe does
+  not establish permission to reach the TV or prove the panel responded.
+- **MCP saved but unverified:** Check, enrollment, saved entry, endpoint Verify
+  and actual Claude attachment are separate facts. A relocated helper needs
+  explicit repair/Connect; reinstall alone cannot restore a disabled grant.
+
 If you already ran `make bundle`, install that exact signed artifact without
 building/signing it again:
 
@@ -211,6 +264,10 @@ when launching `--gui-probe`; after eight seconds it writes this window's
 pixels once. Convert with `sips -s format png INPUT.ppm --out OUTPUT.png`.
 The hook is inactive in release builds and in the default GUI. The checked-in
 [M8 capture](phase-2/evidence/m8-gui-probe-connected.png) was produced this way.
+To capture the Servers Settings panel, also set
+`SAMSUNG_TV_REMOTE_PROBE_CAPTURE_SETTINGS=1`; the debug probe opens that panel
+and captures its window rather than the main window. Connection actions in a
+development probe require an explicitly isolated `CLAUDE_CONFIG_DIR`.
 `cargo test --test server_process` verifies start/status/Stop/Resume/restart,
 fresh-profile persistence, GUI-client outage recovery and detached lifetime;
 `cargo test --test control_http_heap -- --nocapture` measures full-profile

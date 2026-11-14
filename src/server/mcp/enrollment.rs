@@ -270,7 +270,8 @@ impl Enrollment {
             .map_err(|_| EnrollmentError::UnsafeMetadata)?;
         let previous = self.store.read()?;
         if previous.operation_key.as_deref() == Some(key) {
-            if previous.enabled != enabled {
+            if previous.enabled != enabled || previous.generation.0.checked_sub(1) != Some(expected)
+            {
                 return Err(EnrollmentError::KeyConflict);
             }
             if enabled
@@ -515,6 +516,31 @@ mod tests {
     }
 
     #[test]
+    fn retained_keys_bind_the_original_expected_generation_for_grants_and_revocations() {
+        let store = Arc::new(MemoryStore::new());
+        let access = gate();
+        let enrollment = Enrollment::online(store, Arc::new(Credentials), access.clone());
+        let gui = client(&access, &[1; 32]);
+        for (expected, enabled) in [(0, true), (1, false)] {
+            let operation_key = key();
+            let record = enrollment
+                .change_authorized(&gui, expected, &operation_key, enabled)
+                .unwrap();
+            for changed in [expected + 1, u64::MAX] {
+                assert_eq!(
+                    enrollment.change_authorized(&gui, changed, &operation_key, enabled),
+                    Err(EnrollmentError::KeyConflict)
+                );
+            }
+            assert_eq!(enrollment.status().unwrap(), record);
+            assert_eq!(
+                enrollment.change_authorized(&gui, expected, &operation_key, enabled),
+                Ok(record)
+            );
+        }
+    }
+
+    #[test]
     fn stale_grants_and_changed_payload_keys_fail_without_replacing_the_grant() {
         let store = Arc::new(MemoryStore::new());
         let access = gate();
@@ -621,6 +647,11 @@ mod tests {
             Err(crate::infrastructure::private_files::FileError::Locked)
         ));
         drop(enrollment);
-        assert!(directory.lock().is_ok());
+        let released = directory.lock();
+        assert!(
+            released.is_ok(),
+            "ownership after final guard: {:?}",
+            released.err()
+        );
     }
 }

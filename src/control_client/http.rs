@@ -113,15 +113,6 @@ async fn open(
     if !path.starts_with('/') || path.starts_with("//") || path.len() > 2048 {
         return Err(ClientError::InvalidResponse);
     }
-    let socket = TcpStream::connect((std::net::Ipv4Addr::LOCALHOST, endpoint.port))
-        .await
-        .map_err(|_| ClientError::Transport)?;
-    let (mut sender, connection) = hyper::client::conn::http1::handshake(TokioIo::new(socket))
-        .await
-        .map_err(|_| ClientError::Transport)?;
-    let driver = Driver(tokio::spawn(async move {
-        let _ = connection.await;
-    }));
     let bytes = body
         .map(serde_json::to_vec)
         .transpose()
@@ -138,12 +129,43 @@ async fn open(
     if body.is_some() {
         builder = builder.header("content-type", "application/json");
     }
+    if path == "/mcp" && method == "POST" {
+        let body = body.ok_or(ClientError::InvalidResponse)?;
+        let rpc_method = body["method"]
+            .as_str()
+            .ok_or(ClientError::InvalidResponse)?;
+        let version = body["params"]["_meta"]["io.modelcontextprotocol/protocolVersion"]
+            .as_str()
+            .ok_or(ClientError::InvalidResponse)?;
+        builder = builder
+            .header("accept", "application/json, text/event-stream")
+            .header("mcp-protocol-version", version)
+            .header("mcp-method", rpc_method);
+        if rpc_method == "tools/call" {
+            builder = builder.header(
+                "mcp-name",
+                body["params"]["name"]
+                    .as_str()
+                    .ok_or(ClientError::InvalidResponse)?,
+            );
+        }
+    }
     if let Some(challenge) = challenge {
         builder = builder.header("x-bootstrap-challenge", challenge);
     }
     let request = builder
         .body(Full::new(Bytes::from(bytes)))
         .map_err(|_| ClientError::InvalidResponse)?;
+    // Connect only after the request is known to be well formed.
+    let socket = TcpStream::connect((std::net::Ipv4Addr::LOCALHOST, endpoint.port))
+        .await
+        .map_err(|_| ClientError::Transport)?;
+    let (mut sender, connection) = hyper::client::conn::http1::handshake(TokioIo::new(socket))
+        .await
+        .map_err(|_| ClientError::Transport)?;
+    let driver = Driver(tokio::spawn(async move {
+        let _ = connection.await;
+    }));
     let response = sender
         .send_request(request)
         .await

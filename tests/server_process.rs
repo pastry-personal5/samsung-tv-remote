@@ -108,6 +108,105 @@ async fn mcp_offline_preparation_and_revocation_preserve_stop_without_constructi
 }
 
 #[tokio::test]
+async fn removal_disconnect_then_stop_preserves_disable_across_reopen_and_config_conflict() {
+    use samsung_tv_remote::server::mcp::{client_config, connection::Connection};
+    use samsung_tv_remote::server::profile::Profile;
+    for already_stopped in [false, true] {
+        for conflict in [false, true] {
+            let fixture = Fixture::new();
+            let connection = Connection {
+                profile: Profile::development(&fixture.base()).unwrap(),
+                executable: PathBuf::from(BINARY),
+                configuration: fixture.base().join(".claude.json"),
+            };
+            let entry = connection
+                .connect(0, &uuid::Uuid::new_v4().to_string(), None)
+                .await
+                .unwrap()
+                .entry
+                .unwrap();
+            fixture.run("--server-start");
+            let client = fixture.client().await;
+            let observation = mutation(
+                &client,
+                "/v1/probes",
+                json!({"host":"synthetic-tv.invalid"}),
+            )
+            .await;
+            let o = &observation["result"];
+            let paired = mutation(
+                &client,
+                "/v1/pairings",
+                json!({"host":"synthetic-tv.invalid",
+                "attempt_id":o["attempt_id"],"observation_id":o["observation_id"],
+                "fingerprint":o["fingerprint"],"confirm_fingerprint":o["fingerprint"],
+                "label":"Retained removal fixture","selection_generation":"0"}),
+            )
+            .await;
+            assert_eq!(paired["result"]["kind"], "tv_approved_and_saved");
+            let before = state(&client).await;
+            assert_eq!(before["devices"].as_array().unwrap().len(), 1);
+            if already_stopped {
+                fixture.run("--server-stop");
+                fixture.owner_settled();
+            }
+            let changed = json!({"mcpServers":{"samsung-tv-remote":{"type":"http","url":"https://example.invalid"}}});
+            if conflict {
+                std::fs::write(
+                    &connection.configuration,
+                    serde_json::to_vec(&changed).unwrap(),
+                )
+                .unwrap();
+            }
+            let key = uuid::Uuid::new_v4().to_string();
+            let result = connection.disconnect(1, &key, entry.clone()).await;
+            if conflict {
+                assert!(!result.unwrap_err().progress.enrollment.unwrap().enabled);
+                let document: Value =
+                    serde_json::from_slice(&std::fs::read(&connection.configuration).unwrap())
+                        .unwrap();
+                assert_eq!(document, changed);
+            } else {
+                assert!(!result.unwrap().enrollment.unwrap().enabled);
+                // Lost response recovery remains safe even after entry removal.
+                connection.disconnect(1, &key, entry.clone()).await.unwrap();
+                assert!(client_config::inspect(&connection.configuration)
+                    .unwrap()
+                    .is_none());
+            }
+            if already_stopped {
+                let stopped = command(Path::new(BINARY), &fixture.base(), "--server-stop");
+                assert!(!stopped.status.success());
+                assert!(String::from_utf8_lossy(&stopped.stderr).contains("server_stopped"));
+            } else {
+                fixture.run("--server-stop");
+            }
+            fixture.owner_settled();
+            let directory = RuntimeDirectory::open(&fixture.base().join("m8-fake-v1")).unwrap();
+            let marker = directory.read("stopped.json", 4096).unwrap().unwrap();
+            let denied = headers_output(&fixture, entry.url());
+            assert!(!denied.status.success());
+            assert!(denied.stdout.is_empty());
+            let reopened = command(Path::new(BINARY), &fixture.base(), "--server-start");
+            assert!(!reopened.status.success());
+            assert_eq!(
+                directory.read("stopped.json", 4096).unwrap().unwrap(),
+                marker
+            );
+            assert_eq!(mcp_management(&fixture, &["status"])["enabled"], false);
+            // Explicit Resume restores GUI service, never MCP enrollment.
+            fixture.run("--server-resume");
+            let after = state(&fixture.client().await).await;
+            assert_ne!(before["server_epoch"], after["server_epoch"]);
+            assert_eq!(before["devices"], after["devices"]);
+            let denied = headers_output(&fixture, entry.url());
+            assert!(!denied.status.success());
+            assert!(denied.stdout.is_empty());
+        }
+    }
+}
+
+#[tokio::test]
 async fn concurrent_header_helpers_cold_start_one_owner_and_reuse_one_mcp_bearer() {
     let fixture = Fixture::new();
     let prepared = mcp_management(&fixture, &["prepare"]);
