@@ -2,6 +2,15 @@
 
 Status: Active
 
+- 2026-11-15 — Second P3-M2 plan review; see the
+  [plan review](milestone-02-plan-review.md#second-review--2026-11-15).
+  Hidden/unconfigured source keys are now 412 admission rejections, not
+  `not_sent` results, with fixed precedence. Named the wildcard command arms
+  that would skip the stale-selection fence, limited the session fence to
+  Select, kept the frozen diagnostic mapping unchanged behind an agreement
+  test, pinned PascalCase action names, and made pairing backups version 2
+  unconditionally. The tuner reading moved to the owner gate.
+
 - 2026-11-14 — Reviewed and strengthened P3-M2 against the current M1 and
   runtime/storage/client seams; see the [plan review](milestone-02-plan-review.md).
   Specified durable-fact decoder exceptions and persisted confirmation times,
