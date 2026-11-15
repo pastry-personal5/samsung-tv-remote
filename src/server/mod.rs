@@ -12,3 +12,6 @@ pub mod process;
 pub mod production;
 pub mod profile;
 mod publication;
+
+#[cfg(feature = "p3-spike")]
+pub mod diagnostic_controller;

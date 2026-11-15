@@ -269,7 +269,7 @@ fn inspect(arguments: Value, snapshot: &Snapshot) -> Value {
         );
     }
     let tv = device.map(|device| {
-        let mut tv = response::device(device, config_revision(snapshot, id));
+        let mut tv = response::device_detail(device, snapshot);
         let (label, truncated) = results::preview(&device.label);
         tv["label"] = json!(label);
         tv["label_truncated"] = json!(truncated);

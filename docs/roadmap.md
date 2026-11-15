@@ -4,7 +4,7 @@
 | --- | --- | --- | --- |
 | P1 | Foundation and First Live Control | Done | [Phase 1](phase-1/phase-1.md) |
 | P2 | Local Control Server and API Clients | Active | [Phase 2](phase-2/phase-2.md) |
-| P3 | Conditional Local Control Surfaces | Planned | [Phase 3](phase-3/phase-3.md) |
+| P3 | Conditional Local Control Surfaces | Active | [Phase 3](phase-3/phase-3.md) |
 
 ## Product follow-up
 

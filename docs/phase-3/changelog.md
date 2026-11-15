@@ -2,6 +2,61 @@
 
 Status: Active
 
+- 2026-11-14 — Reviewed and strengthened P3-M2 against the current M1 and
+  runtime/storage/client seams; see the [plan review](milestone-02-plan-review.md).
+  Specified durable-fact decoder exceptions and persisted confirmation times,
+  typed uncertain-write reconciliation, receipt-preserving deduplication,
+  versioned pairing backups and recoverable migration on every write path.
+  Clarified omitted source details, full replacement validation, distinct
+  hidden/unconfigured reasons, label identity and hardware acceptance. Added
+  two-client, failure, disk and framed-size proof obligations. Implementation,
+  MCP policy/budgets and hardware acceptance remain open.
+
+- 2026-11-14 — Implemented the explicitly gated `p3-spike` owner/controller
+  under the [frozen private contract](milestone-01-diagnostic-contract.md).
+  Added one cancelable lease, finite intents/alias guards, timeout quarantine,
+  bounded diagnostic codecs and sanitized draft exports. Prepared a preserved
+  Apple-signed candidate and verified it without requesting Keychain access.
+  Operator confirmed a hands-on session is available; owner replacement and
+  individual TV effects still require their own intent. No capture is invented.
+
+- 2026-11-14 — Planned P3-M2 in its [overview](milestone-02-overview.md) and
+  [architecture](milestone-02-architecture.md). Source keys become five
+  `RemoteAction` values on the existing admission path. Per-TV Shown/Hidden
+  configuration with optional labels is stored in the saved-TV record (device
+  format v3, fail-closed downgrade, one-time backup) and shares the Wake config
+  revision. Shown keys project as durable `user_confirmation` facts with no
+  session context. Hidden is a preference, not `unsupported`. The tuner is
+  configured like an HDMI port; the Sources menu is always offered. Labels stay
+  out of non-selected snapshot entries to fit the 1,024-TV size limit. Open:
+  implementation authorization, MCP label editing (GUI-only recommended), and
+  the MCP budget lane for the enum and `inspect_tv` growth.
+
+- 2026-11-14 — Owner requested P3-M1 implementation. Recorded an offline-code
+  exception to predecessor ordering, without accepting Phase 2, hardware or
+  MCP budgets. Implemented bounded semantic evidence, session fencing,
+  content-free IME seams and shared HTTP/SSE/native/MCP inspection projections;
+  see the [implementation record](milestone-01-implementation.md). The signed
+  diagnostic controller, reviewed captures and production parsers remain open.
+  The phase and M1 are Active, not Done.
+
+- 2026-11-14 — Reviewed P3-M1 against the actual session and action seams; see
+  the [plan review](milestone-01-plan-review.md). Added the missing diagnostic
+  preparation slice and [physical-TV automation contract](milestone-01-spike-automation.md),
+  plus a tested offline matrix recorder. Made uncorrelated reply timeout
+  quarantine, fresh app aliases after reconnect, operation-specific acquisition
+  gating, atomic invalidation and ID integrity explicit. Live harness and
+  hardware evidence remain pending; no predecessor waiver or physical effect
+  is claimed.
+
+- 2026-11-14 — Planned P3-M1 in its [overview](milestone-01-overview.md)
+  and [architecture](milestone-01-architecture.md). Defined the target-TV
+  spike, evidence/freshness model, generation fences, passive M1 acquisition,
+  existing HTTP/SSE and MCP read projections, and deterministic acceptance
+  matrix. M1 adds no persistent catalog or feature controls. Phase 2 completion,
+  the MCP budget decision, and target-TV evidence remain open gates; planning
+  does not waive them or claim the spike has run.
+
 - 2026-11-14 — Revised the plan. Split capability evidence from request
   outcomes and reused Phase 2's `not_sent`/`written`/`uncertain` set. Made
   source ports user-configured, because no probe can prove a source key.

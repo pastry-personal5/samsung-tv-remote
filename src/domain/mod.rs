@@ -1,3 +1,4 @@
+pub mod capability;
 pub mod device;
 pub mod remote_action;
 

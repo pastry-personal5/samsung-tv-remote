@@ -183,6 +183,44 @@ pub fn device(value: &SavedDevice, revision: u64) -> Value {
         "wake":{"wired_mac":value.wake.wired.map(|m|m.to_string()),"wifi_mac":value.wake.wifi.map(|m|m.to_string()),"active_interface":value.wake.active.map(|v| match v { WakeInterface::Wired => "Wired", WakeInterface::WiFi => "WiFi" })}})
 }
 
+pub fn capabilities(summary: &crate::application::capabilities::CapabilitySummary) -> Value {
+    let facts: Vec<_> = summary.facts.iter().map(|fact| json!({
+        "key":fact.key,"support":fact.support,"source":fact.source,"freshness":fact.freshness,
+        "observed_at_unix_ms":fact.observed_at_unix_ms.map(Counter),
+            "context":fact.context.map(|c| json!({
+            "selection_generation":Counter(c.selection_generation),"session":Counter(c.session)}))
+    })).collect();
+    // All in-memory history belongs to one owner epoch. Encode it once per TV
+    // to keep the full 1,024-record snapshot inside the existing output cap.
+    let evidence_epoch = summary
+        .facts
+        .iter()
+        .find_map(|f| f.context.map(|c| wire::epoch(c.epoch)));
+    json!({"device_id":wire::device(summary.device),"evidence_epoch":evidence_epoch,"reason":summary.reason,"ime_active":summary.ime_active,"facts":facts})
+}
+
+/// Snapshot, detail and inspect share exactly one owner projection.
+pub fn device_detail(value: &SavedDevice, snapshot: &Snapshot) -> Value {
+    let revision = snapshot
+        .configuration_revisions
+        .iter()
+        .find(|(id, _)| *id == value.id)
+        .map_or(0, |(_, r)| *r);
+    let mut result = device(value, revision);
+    let fallback = crate::application::capabilities::CapabilitySummary::unknown(
+        value.id,
+        crate::domain::capability::CapabilityReason::EvidenceMissing,
+    );
+    result["capabilities"] = capabilities(
+        snapshot
+            .capabilities
+            .iter()
+            .find(|c| c.device == value.id)
+            .unwrap_or(&fallback),
+    );
+    result
+}
+
 pub fn startup(value: StartupState) -> &'static str {
     match value {
         StartupState::Restoring => "restoring",
@@ -204,16 +242,7 @@ pub fn snapshot(value: &Snapshot) -> Value {
     let devices: Vec<_> = value
         .devices
         .iter()
-        .map(|d| {
-            device(
-                d,
-                value
-                    .configuration_revisions
-                    .iter()
-                    .find(|(id, _)| *id == d.id)
-                    .map_or(0, |(_, r)| *r),
-            )
-        })
+        .map(|d| device_detail(d, value))
         .collect();
     let recovery = recovery(value);
     json!({"server_epoch":wire::epoch(value.epoch),"revision":Counter(value.revision),"startup":startup,"admission_closed":value.admission_closed,

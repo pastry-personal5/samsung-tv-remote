@@ -142,10 +142,18 @@ impl CredentialStore for SyntheticCredentials {
 struct FakePorts(Arc<Effects>);
 struct FakeConnection(Arc<Effects>);
 struct FakeControl {
+    #[cfg(feature = "p3-spike")]
+    diagnostic: Option<crate::application::diagnostic::DiagnosticPort>,
+    #[cfg(feature = "p3-spike")]
+    diagnostic_task: tokio::task::JoinHandle<()>,
     sender: Option<mpsc::Sender<TvSessionEvent>>,
     effects: Arc<Effects>,
 }
 impl TvSessionControl for FakeControl {
+    #[cfg(feature = "p3-spike")]
+    fn take_diagnostic(&mut self) -> Option<crate::application::diagnostic::DiagnosticPort> {
+        self.diagnostic.take()
+    }
     fn try_click(&self, id: RequestId, _action: RemoteAction) -> bool {
         if self
             .sender
@@ -159,6 +167,8 @@ impl TvSessionControl for FakeControl {
         }
     }
     fn abort(&mut self) {
+        #[cfg(feature = "p3-spike")]
+        self.diagnostic_task.abort();
         self.sender.take();
     }
 }
@@ -178,8 +188,14 @@ impl TvConnection for FakeConnection {
     }
     fn start(self: Box<Self>) -> ActiveTvSession {
         let (sender, receiver) = mpsc::channel(32);
+        #[cfg(feature = "p3-spike")]
+        let (diagnostic, diagnostic_task) = fake_diagnostic(self.0.clone());
         ActiveTvSession {
             control: Box::new(FakeControl {
+                #[cfg(feature = "p3-spike")]
+                diagnostic: Some(diagnostic),
+                #[cfg(feature = "p3-spike")]
+                diagnostic_task,
                 sender: Some(sender),
                 effects: self.0,
             }),
@@ -243,4 +259,62 @@ impl WakeTransport for FakePorts {
             })
         })
     }
+}
+
+#[cfg(feature = "p3-spike")]
+fn fake_diagnostic(
+    effects: Arc<Effects>,
+) -> (
+    crate::application::diagnostic::DiagnosticPort,
+    tokio::task::JoinHandle<()>,
+) {
+    use crate::application::diagnostic::*;
+    let (commands, mut requests) = mpsc::channel::<SessionRequest>(1);
+    let (observed, events) = mpsc::channel(16);
+    let task = tokio::spawn(async move {
+        while let Some(request) = requests.recv().await {
+            let outcome = if !request.alive.load(Ordering::SeqCst) {
+                WriteOutcome::NotSent
+            } else if matches!(request.experiment, WireExperiment::Ime) {
+                WriteOutcome::ObservationOnly
+            } else {
+                effects.writes.fetch_add(1, Ordering::SeqCst);
+                WriteOutcome::Written
+            };
+            if observed
+                .send(SessionObservation::Write(request.sequence, outcome))
+                .await
+                .is_err()
+            {
+                return;
+            }
+            if outcome == WriteOutcome::Written {
+                let event = match request.experiment {
+                    WireExperiment::Catalog => Some(CandidateEvent::Catalog(vec![
+                        DiagnosticApp::new("synthetic.a", "Synthetic A").expect("fake app"),
+                        DiagnosticApp::new("synthetic.b", "Synthetic B").expect("fake app"),
+                    ])),
+                    WireExperiment::Launch(_) => Some(CandidateEvent::Launch(PayloadShape::Object)),
+                    _ => None,
+                };
+                if let Some(event) = event {
+                    let _ = observed
+                        .send(SessionObservation::Frame {
+                            sequence: request.sequence,
+                            bytes: 128,
+                            event,
+                        })
+                        .await;
+                }
+            }
+            if observed
+                .send(SessionObservation::End(request.sequence))
+                .await
+                .is_err()
+            {
+                return;
+            }
+        }
+    });
+    (DiagnosticPort { commands, events }, task)
 }

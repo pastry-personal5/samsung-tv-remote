@@ -1,6 +1,6 @@
 # Phase 3: Conditional Local Control Surfaces
 
-Status: Planned
+Status: Active
 
 ## Goal
 
@@ -25,6 +25,11 @@ active source, the foreground app, or what a text field now contains.
 - The research message shapes come from third-party clients, not Samsung
   documentation. Code that depends on a frame shape follows P3-M1's
   target-TV evidence, not the research alone.
+
+The 2026-11-14 implementation request authorizes P3-M1’s offline foundation
+ahead of predecessor acceptance. See its [authorization and limits](milestone-01-overview.md#implementation-authorization--2026-11-14).
+Phase 2 acceptance, signed diagnostic work, physical evidence and installed-client
+MCP budgets remain open; this is not authorization to release the phase.
 
 ## Product decision
 
@@ -56,9 +61,9 @@ providers; see the
   and IME start/end. It ignores unknown frames and never treats them as state.
   Wire shapes and event names stay in infrastructure.
 - **Untrusted TV data.** App names and IDs come from the TV. Bound their
-  length and count, and strip control and bidirectional-override characters
-  before storing or rendering them. MCP results return them as data, never as
-  instructions.
+  length and count; strip control and bidirectional-override characters from
+  display names. Reject unsafe IDs rather than transforming their identity.
+  MCP results return them as data, never as instructions.
 - **Per-TV, removable storage.** Source labels and app catalogs belong to one
   saved TV, are server-owned, and are deleted by Forget inside its existing
   crash-recovery transaction, so an interrupted Forget leaves no orphaned
@@ -84,8 +89,8 @@ providers; see the
 
 | ID | Milestone | Deliverable | Status | Record |
 | --- | --- | --- | --- | --- |
-| P3-M1 | Capability model and protocol evidence | Target-TV frame evidence; server-owned per-TV capability model with evidence source, staleness, and invalidation; API and MCP read access. | Planned | — |
-| P3-M2 | Sources | User-configured, labelled direct-input keys and the Sources menu fallback, reported as requests only. | Planned | — |
+| P3-M1 | Capability model and protocol evidence | Target-TV frame evidence; server-owned per-TV capability model with evidence source, staleness, and invalidation; API and MCP read access. | Active | [Overview](milestone-01-overview.md) · [Architecture](milestone-01-architecture.md) |
+| P3-M2 | Sources | User-configured, labelled direct-input keys and the Sources menu fallback, reported as requests only. | Planned | [Overview](milestone-02-overview.md) · [Architecture](milestone-02-architecture.md) |
 | P3-M3 | Apps | Per-TV installed-app catalog with bounded refresh and launch by a returned ID only. | Planned | — |
 | P3-M4 | Text Input | Server-owned IME session that sends UTF-8 text to a focused native Tizen field without retaining it. | Planned | — |
 | P3-M5 | Integrated resilience and accessibility | Cross-feature fakes, two-client and restart behavior, budget re-measurement, native review, and the target-TV matrix. | Planned | — |
@@ -102,7 +107,9 @@ its acceptance checklist.
 
 ### P3-M1: Capability model and protocol evidence
 
-- Run a target-TV spike before fixing any schema. Record the actual
+- Prepare the finite server-owned diagnostic harness and run a target-TV
+  spike before fixing production schemas; see the
+  [automation workflow](milestone-01-spike-automation.md). Record the actual
   installed-app reply, launch reply or silence, IME start/end events, and
   each direct source key's effect, then turn them into sanitized fixtures.
   Commit no addresses, tokens, typed text, or account data.

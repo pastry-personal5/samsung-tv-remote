@@ -198,7 +198,24 @@ async fn removal_disconnect_then_stop_preserves_disable_across_reopen_and_config
             fixture.run("--server-resume");
             let after = state(&fixture.client().await).await;
             assert_ne!(before["server_epoch"], after["server_epoch"]);
-            assert_eq!(before["devices"], after["devices"]);
+            let before_projection =
+                samsung_tv_remote::control_client::projection::snapshot(&before).unwrap();
+            let after_projection =
+                samsung_tv_remote::control_client::projection::snapshot(&after).unwrap();
+            assert_eq!(before_projection.devices, after_projection.devices);
+            assert_eq!(
+                before_projection.configuration_revisions,
+                after_projection.configuration_revisions
+            );
+            // Resume creates a fresh owner: saved configuration survives,
+            // but no capability observation or live field survives restart.
+            for summary in after_projection.capabilities.iter() {
+                assert!(!summary.ime_active);
+                assert!(summary.facts.iter().all(|fact| fact.support
+                    == samsung_tv_remote::domain::capability::Support::Unknown
+                    && fact.context.is_none()
+                    && fact.observed_at_unix_ms.is_none()));
+            }
             let denied = headers_output(&fixture, entry.url());
             assert!(!denied.status.success());
             assert!(denied.stdout.is_empty());
@@ -1585,4 +1602,75 @@ async fn native_start_status_names_new_owner_creation_separately_from_attachment
         assert_eq!(started, starts_owner);
         remote.disconnect();
     }
+}
+
+#[cfg(feature = "p3-spike")]
+#[tokio::test]
+async fn foreground_diagnostic_controller_uses_one_fake_owner_and_exports_only_synthetic_evidence()
+{
+    use std::io::Write;
+    use std::process::Stdio;
+    let fixture = Fixture::new();
+    fixture.run("--server-start");
+    let client = fixture.client().await;
+    let observation = mutation(
+        &client,
+        "/v1/probes",
+        json!({"host":"synthetic-tv.invalid"}),
+    )
+    .await;
+    let o = &observation["result"];
+    let paired = mutation(&client,"/v1/pairings",json!({"host":"synthetic-tv.invalid","attempt_id":o["attempt_id"],"observation_id":o["observation_id"],
+        "fingerprint":o["fingerprint"],"confirm_fingerprint":o["fingerprint"],"label":"Diagnostic fake","selection_generation":"0"})).await;
+    assert_eq!(paired["result"]["kind"], "tv_approved_and_saved");
+    let output_dir = fixture.base().join("diagnostic-drafts");
+    let mut child = Command::new(BINARY)
+        .arg("--p3-spike")
+        .arg("baseline")
+        .arg(&output_dir)
+        .arg("--fake-profile")
+        .arg(fixture.base())
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    child
+        .stdin
+        .take()
+        .unwrap()
+        .write_all(b"catalog\naliases 0 1\nconfirm launch-a\nstatus\nquit\n")
+        .unwrap();
+    let output = child.wait_with_output().unwrap();
+    assert!(
+        output.status.success(),
+        "diagnostic controller failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let report: Value =
+        serde_json::from_slice(&std::fs::read(output_dir.join("report-000.json")).unwrap())
+            .unwrap();
+    assert_eq!(report["provenance"], "synthetic");
+    assert_eq!(report["machine"]["closed"], true);
+    assert_eq!(report["machine"]["records"].as_array().unwrap().len(), 2);
+    assert_eq!(report["machine"]["records"][1]["write"], "written");
+    assert_eq!(
+        report["machine"]["records"][1]["association"],
+        "ambiguous_single_flight"
+    );
+    let text = report.to_string();
+    for private in [
+        "synthetic.a",
+        "synthetic.b",
+        "synthetic-tv.invalid",
+        "synthetic-token",
+        "Diagnostic fake",
+    ] {
+        assert!(!text.contains(private), "private field escaped report");
+    }
+    assert!(!String::from_utf8_lossy(&output.stdout).contains("synthetic-token"));
+    assert_eq!(
+        state(&fixture.client().await).await["connection"],
+        "not_connected"
+    );
 }

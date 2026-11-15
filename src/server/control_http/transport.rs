@@ -36,6 +36,10 @@ use crate::server::access::{AccessError, AccessGate, AuthorizedClient};
 use crate::server::mcp::enrollment::{Enrollment, EnrollmentError};
 use crate::server::mcp::{self, protocol::Reply as McpReply};
 
+#[cfg(feature = "p3-spike")]
+#[path = "diagnostic.rs"]
+mod diagnostic;
+
 pub const MAX_CONNECTIONS: usize = 128;
 pub const MAX_HEADERS: usize = 16 * 1024;
 pub const MAX_ORDINARY: usize = 64;
@@ -304,6 +308,10 @@ impl HttpAdapter {
             .services
             .get(&client.identity)
             .ok_or(code(403, "forbidden"))?;
+        #[cfg(feature = "p3-spike")]
+        if path.starts_with("/_p3/") {
+            return diagnostic::dispatch(request, client, service, streaming).await;
+        }
         if matches!(path.as_str(), "/v1/mcp" | "/v1/mcp/enrollment") {
             no_query(&query)?;
             let enrollment = self
@@ -497,13 +505,10 @@ impl HttpAdapter {
                             .iter()
                             .find(|d| d.id == id)
                             .ok_or(code(404, "not_found"))?;
-                        let revision = snapshot
-                            .snapshot
-                            .configuration_revisions
-                            .iter()
-                            .find(|(d, _)| *d == id)
-                            .map_or(0, |(_, r)| *r);
-                        Ok(json_response(200, response::device(device, revision)))
+                        Ok(json_response(
+                            200,
+                            response::device_detail(device, &snapshot.snapshot),
+                        ))
                     } else {
                         Err(code(404, "not_found"))
                     }

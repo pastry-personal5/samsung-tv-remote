@@ -1,8 +1,11 @@
+pub mod capabilities;
 pub mod certificate_trust;
 pub mod control_service;
 pub mod control_state;
 pub mod credential_store;
 pub mod device_repository;
+#[cfg(feature = "p3-spike")]
+pub mod diagnostic;
 mod operations;
 pub mod recovery;
 pub mod remote_dispatcher;

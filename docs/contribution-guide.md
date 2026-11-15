@@ -198,6 +198,19 @@ Run individual tests while iterating with `cargo test <name>`. Do not require a
 physical TV or a local network for automated tests; use deterministic fakes for
 protocol and pairing boundaries.
 
+P3-M1's offline physical-TV matrix recorder is documented in the
+[spike workflow](phase-3/milestone-01-spike-automation.md). Run its isolated
+checks with `python3 -B tests/test_p3_spike_record.py` or
+`cargo test --test p3_spike_record`; the latter is also part of `cargo test`.
+These checks use files and synthetic observations only. The recorder sends no
+TV requests. The `p3-spike` Cargo feature adds the separate private diagnostic
+owner/controller described in that workflow. Build a preserved signed artifact
+with `make bundle-p3-spike-candidate`; building never installs it or restarts
+an owner. Default builds omit the lane. When changing it, additionally run
+`cargo clippy --all-targets --features p3-spike -- -D warnings` and
+`cargo test --features p3-spike`. These tests use isolated fake profiles and
+synthetic observations; live experiments still require per-effect intent.
+
 M8 HTTP integration tests use an ephemeral literal loopback listener and fake
 TV/credential ports:
 

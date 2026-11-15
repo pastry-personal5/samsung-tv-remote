@@ -10,7 +10,7 @@ Current references:
 - [Phase 1](phase-1/phase-1.md) — milestone status and open acceptance work.
 - [Phase 2](phase-2/phase-2.md) — active control server, GUI client, and
   Streamable HTTP MCP refactor.
-- [Phase 3](phase-3/phase-3.md) — planned Sources, Apps, and Text Input
+- [Phase 3](phase-3/phase-3.md) — active capability foundation; planned Sources, Apps, and Text Input
   features on the Phase 2 server.
 - [P2-M6 contract review](phase-2/milestone-06-overview.md) — current
   architecture, API, MCP, migration and signed-prototype evidence.

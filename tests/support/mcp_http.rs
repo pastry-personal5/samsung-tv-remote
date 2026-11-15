@@ -718,3 +718,25 @@ async fn receipt_pages_continue_by_either_operation_selector() {
     );
     assert!(second["next_cursor"].is_null());
 }
+
+#[tokio::test]
+async fn capability_inspection_budget_sample_is_bounded_and_keeps_fifteen_tools() {
+    let h = Harness::new().await;
+    let id = h.pair().await;
+    let (status, list) = h.rpc(2, "tools/list", json!({})).await;
+    assert_eq!(status, 200);
+    assert_eq!(list["result"]["tools"].as_array().unwrap().len(), 15);
+    let (status, inspect) = h
+        .rpc(
+            2,
+            "tools/call",
+            json!({"name":"inspect_tv","arguments":{"device_id":id}}),
+        )
+        .await;
+    assert_eq!(status, 200);
+    let catalog_bytes = serde_json::to_vec(&list["result"]).unwrap().len();
+    let inspection_bytes = serde_json::to_vec(&inspect["result"]).unwrap().len();
+    assert!(inspection_bytes < 128 * 1024);
+    println!("P3-M1 actual server JSON: tools/list={catalog_bytes} bytes; inspect_tv result (both channels)={inspection_bytes} bytes; this is not an installed-client token measurement");
+    h.close().await;
+}

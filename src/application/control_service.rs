@@ -309,6 +309,7 @@ pub struct Snapshot {
     pub startup: StartupState,
     pub control: ControlState,
     pub devices: Arc<Vec<SavedDevice>>,
+    pub capabilities: Arc<Vec<super::capabilities::CapabilitySummary>>,
     pub configuration_revisions: Arc<Vec<(DeviceId, u64)>>,
     /// Duplicate hosts are preserved for explicit resolution, never deleted.
     pub duplicate_records: bool,
@@ -342,6 +343,8 @@ pub struct Subscription {
 }
 
 pub(crate) enum Message {
+    #[cfg(feature = "p3-spike")]
+    Diagnostic(ClientId, super::diagnostic::DiagnosticMessage),
     Fence(
         Epoch,
         AdmissionAuthorization,
@@ -375,7 +378,7 @@ pub struct ControlService {
 }
 
 impl ControlService {
-    async fn exchange<T>(
+    pub(crate) async fn exchange<T>(
         &self,
         message: Message,
         response: oneshot::Receiver<T>,

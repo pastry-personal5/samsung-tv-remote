@@ -361,3 +361,104 @@ async fn partial_native_forget_is_shared_but_only_explicit_mcp_recovery_finishes
     assert_eq!(h.effects.packets.load(Ordering::SeqCst), 0);
     h.close().await;
 }
+
+#[tokio::test]
+async fn capability_reads_share_owner_revision_and_session_fences_without_tv_effects() {
+    let h = Harness::new().await;
+    let device = h.pair().await;
+    let response = h.response(1, "GET", "/v1/events", Value::Null).await;
+    let mut events = Events {
+        body: response.into_body(),
+        buffer: Vec::new(),
+    };
+    let (_, initial) = events.next().await;
+    let unknown = &initial["devices"][0]["capabilities"];
+    assert_eq!(unknown["facts"].as_array().unwrap().len(), 8);
+    assert!(unknown["facts"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .all(|f| f["support"] == "unknown"));
+    let sender = h.effects.sessions.lock().unwrap().last().unwrap().clone();
+    sender.send(TvSessionEvent::ImeStarted).await.unwrap();
+    let (_, started) = events.next().await;
+    assert_eq!(started["devices"][0]["capabilities"]["ime_active"], true);
+    let native = projection::snapshot(&started).unwrap();
+    assert!(native.capabilities[0].ime_active);
+    let inspected = h.tool(2, "inspect_tv", json!({"device_id":device})).await;
+    let (_, detail) = h
+        .json(1, "GET", &format!("/v1/devices/{device}"), Value::Null)
+        .await;
+    assert_eq!(inspected["revision"], started["revision"]);
+    assert_eq!(inspected["tv"]["capabilities"], detail["capabilities"]);
+    assert_eq!(
+        detail["capabilities"],
+        started["devices"][0]["capabilities"]
+    );
+    sender.send(TvSessionEvent::ImeStarted).await.unwrap();
+    sender.send(TvSessionEvent::ImeEnded).await.unwrap();
+    let (_, ended) = events.next().await;
+    assert_eq!(ended["devices"][0]["capabilities"]["ime_active"], false);
+    assert_eq!(
+        ended["revision"].as_str().unwrap().parse::<u64>().unwrap(),
+        native.revision + 1
+    );
+    sender.send(TvSessionEvent::ImeStarted).await.unwrap();
+    events.next().await;
+    // Same-TV selection still fences the live field and keeps bounded history.
+    h.tool(2, "select_tv", json!({"server_epoch":ended["server_epoch"],"operation_key":uuid::Uuid::new_v4().to_string(),
+        "device_id":device,"expected_generation":ended["selection_generation"]})).await;
+    let fenced = loop {
+        let (_, event) = events.next().await;
+        if event["selection_generation"] != ended["selection_generation"] {
+            break event;
+        }
+    };
+    let summary = &fenced["devices"][0]["capabilities"];
+    assert_eq!(summary["ime_active"], false);
+    assert_eq!(summary["facts"][2]["freshness"], "stale");
+    assert_eq!(summary["facts"][2]["support"], "supported");
+    projection::snapshot(&fenced).unwrap();
+    // A frame still queued on the retired stream cannot revive that session.
+    let _ = sender.send(TvSessionEvent::ImeStarted).await;
+    let current = h.state().await;
+    assert_eq!(current["devices"][0]["capabilities"]["ime_active"], false);
+    assert_eq!(h.effects.probes.load(Ordering::SeqCst), 1);
+    assert_eq!(h.effects.connections.load(Ordering::SeqCst), 1);
+    assert_eq!(h.effects.remote_attempts.load(Ordering::SeqCst), 0);
+    assert_eq!(h.effects.writes.load(Ordering::SeqCst), 0);
+    assert_eq!(h.effects.packets.load(Ordering::SeqCst), 0);
+    drop(events);
+    h.close().await;
+}
+
+#[tokio::test]
+async fn capability_disconnect_and_token_rejection_keep_history_without_reconnect_or_replay() {
+    for event in [TvSessionEvent::Disconnected, TvSessionEvent::TokenRejected] {
+        let h = Harness::new().await;
+        let id = h.pair().await;
+        let response = h.response(1, "GET", "/v1/events", Value::Null).await;
+        let mut events = Events {
+            body: response.into_body(),
+            buffer: Vec::new(),
+        };
+        events.next().await;
+        let sender = h.effects.sessions.lock().unwrap().last().unwrap().clone();
+        sender.send(TvSessionEvent::ImeStarted).await.unwrap();
+        events.next().await;
+        sender.send(event).await.unwrap();
+        let (_, disconnected) = events.next().await;
+        let summary = &disconnected["devices"][0]["capabilities"];
+        assert_eq!(summary["reason"], "disconnected");
+        assert_eq!(summary["ime_active"], false);
+        assert_eq!(summary["facts"][2]["freshness"], "stale");
+        assert_eq!(summary["facts"][2]["support"], "supported");
+        let inspected = h.tool(2, "inspect_tv", json!({"device_id":id})).await;
+        assert_eq!(&inspected["tv"]["capabilities"], summary);
+        projection::snapshot(&disconnected).unwrap();
+        assert_eq!(h.effects.connections.load(Ordering::SeqCst), 1);
+        assert_eq!(h.effects.writes.load(Ordering::SeqCst), 0);
+        drop(events);
+        h.close().await;
+    }
+}

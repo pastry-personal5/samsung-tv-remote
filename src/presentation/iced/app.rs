@@ -1189,6 +1189,7 @@ mod tests {
                     })
                     .collect(),
             ),
+            capabilities: Default::default(),
             configuration_revisions: Arc::new(target.into_iter().map(|id| (id, 0)).collect()),
             duplicate_records: false,
             storage_pending: false,

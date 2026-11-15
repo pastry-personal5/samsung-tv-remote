@@ -183,7 +183,23 @@ pub fn snapshot(v: &Value) -> Result<Snapshot, ClientError> {
         }
         Some(marker)
     };
+    let mut capabilities = Vec::with_capacity(values.len());
+    let blocked = text(v, "startup")? != "ready" || flag(v, "admission_closed")?;
+    for value in values {
+        let summary = decode_capabilities(value, epoch, &control)?;
+        if blocked
+            && (summary.ime_active
+                || summary
+                    .facts
+                    .iter()
+                    .any(|f| f.freshness == crate::domain::capability::Freshness::Current))
+        {
+            return Err(invalid());
+        }
+        capabilities.push(summary);
+    }
     Ok(Snapshot {
+        capabilities: Arc::new(capabilities),
         epoch,
         revision: count(v, "revision")?,
         admission_closed: flag(v, "admission_closed")?,
@@ -207,6 +223,112 @@ pub fn snapshot(v: &Value) -> Result<Snapshot, ClientError> {
         wake_operation: optional_operation(v, "wake_operation", epoch)?,
         pairing_pending: flag(v, "pairing_pending")?,
     })
+}
+
+fn decode_capabilities(
+    v: &Value,
+    epoch: Epoch,
+    control: &ControlState,
+) -> Result<crate::application::capabilities::CapabilitySummary, ClientError> {
+    use crate::application::capabilities::{CapabilityFact, CapabilitySummary, EvidenceContext};
+    use crate::domain::capability::*;
+    let device = id(v, "device_id")?;
+    // Only an absent field is the compatible-old-server fallback. Null is malformed.
+    let Some(v) = v.get("capabilities") else {
+        return Ok(CapabilitySummary::unknown(
+            device,
+            CapabilityReason::EvidenceMissing,
+        ));
+    };
+    if id(v, "device_id")? != device {
+        return Err(invalid());
+    }
+    let evidence_epoch = if v["evidence_epoch"].is_null() {
+        None
+    } else {
+        Some(wire::parse_epoch(text(v, "evidence_epoch")?).map_err(|_| invalid())?)
+    };
+    // M1 never restores evidence across owner restarts.
+    if evidence_epoch.is_some_and(|observed| observed != epoch) {
+        return Err(invalid());
+    }
+    let reason: CapabilityReason =
+        serde_json::from_value(v["reason"].clone()).map_err(|_| invalid())?;
+    let values = v["facts"]
+        .as_array()
+        .filter(|a| a.len() == CapabilityKey::ALL.len())
+        .ok_or_else(invalid)?;
+    let mut facts = CapabilityKey::ALL.map(CapabilityFact::unknown);
+    for (index, value) in values.iter().enumerate() {
+        let key: CapabilityKey =
+            serde_json::from_value(value["key"].clone()).map_err(|_| invalid())?;
+        if CapabilityKey::ALL[index] != key {
+            return Err(invalid());
+        }
+        let context = if value["context"].is_null() {
+            None
+        } else {
+            let c = &value["context"];
+            Some(EvidenceContext {
+                epoch: evidence_epoch.ok_or_else(invalid)?,
+                selection_generation: count(c, "selection_generation")?,
+                session: count(c, "session")?,
+            })
+        };
+        let fact = CapabilityFact {
+            key,
+            support: serde_json::from_value(value["support"].clone()).map_err(|_| invalid())?,
+            source: serde_json::from_value(value["source"].clone()).map_err(|_| invalid())?,
+            freshness: serde_json::from_value(value["freshness"].clone()).map_err(|_| invalid())?,
+            observed_at_unix_ms: if value["observed_at_unix_ms"].is_null() {
+                None
+            } else {
+                Some(count(value, "observed_at_unix_ms")?)
+            },
+            context,
+        };
+        if !fact.valid() {
+            return Err(invalid());
+        }
+        if fact.freshness == Freshness::Current
+            && (control.selected_device() != Some(device)
+                || control.connection_state() != ConnectionState::Ready
+                || control.pairing_state() != PairingState::Ready
+                || context.is_none_or(|c| {
+                    c.epoch != epoch || c.selection_generation != control.selection_generation()
+                })
+                || reason != CapabilityReason::Connected)
+        {
+            return Err(invalid());
+        }
+        facts[index] = fact;
+    }
+    let ime_active = flag(v, "ime_active")?;
+    if evidence_epoch.is_some() != facts.iter().any(|f| f.context.is_some()) {
+        return Err(invalid());
+    }
+    let summary = CapabilitySummary {
+        device,
+        reason,
+        ime_active,
+        facts,
+    };
+    if ime_active
+        && (summary.fact(CapabilityKey::NativeIme).freshness != Freshness::Current
+            || summary.fact(CapabilityKey::NativeIme).support != Support::Supported)
+    {
+        return Err(invalid());
+    }
+    let mut session = None;
+    for fact in &summary.facts {
+        if fact.freshness == Freshness::Current {
+            if session.is_some_and(|s| fact.context != Some(s)) {
+                return Err(invalid());
+            }
+            session = fact.context;
+        }
+    }
+    Ok(summary)
 }
 pub(crate) fn initial(v: &Value) -> Result<(Snapshot, Vec<OperationId>), ClientError> {
     let snapshot = snapshot(v)?;
@@ -630,6 +752,7 @@ mod tests {
             startup: StartupState::Ready,
             control: ControlState::none(),
             devices: Arc::new(vec![]),
+            capabilities: Arc::new(vec![]),
             configuration_revisions: Arc::new(vec![]),
             duplicate_records: false,
             storage_pending: false,

@@ -422,6 +422,44 @@ fn maximum_profile_snapshot_and_sse_fit_the_bounded_output_budget() {
         })
         .collect();
     let revisions = Arc::new(devices.iter().map(|d| (d.id, u64::MAX)).collect());
+    // Every TV carries the longest valid retained history, not the unknown fallback.
+    let capabilities = {
+        use samsung_tv_remote::application::capabilities::*;
+        use samsung_tv_remote::domain::capability::*;
+        let context = EvidenceContext {
+            epoch: Epoch::from_u128(u128::MAX),
+            selection_generation: u64::MAX,
+            session: u64::MAX,
+        };
+        let fact = |key| {
+            let ime = key == CapabilityKey::NativeIme;
+            CapabilityFact {
+                key,
+                support: if ime {
+                    Support::Supported
+                } else {
+                    Support::Unsupported
+                },
+                source: if ime {
+                    EvidenceSource::TvEvent
+                } else {
+                    EvidenceSource::UserConfirmation
+                },
+                observed_at_unix_ms: Some(u64::MAX),
+                context: Some(context),
+                freshness: Freshness::Stale,
+            }
+        };
+        devices
+            .iter()
+            .map(|d| CapabilitySummary {
+                device: d.id,
+                reason: CapabilityReason::FeatureUnsupported,
+                ime_active: false,
+                facts: CapabilityKey::ALL.map(fact),
+            })
+            .collect::<Vec<_>>()
+    };
     let snapshot = Snapshot {
         admission_closed: false,
         epoch: Epoch::from_u128(u128::MAX),
@@ -429,6 +467,7 @@ fn maximum_profile_snapshot_and_sse_fit_the_bounded_output_budget() {
         startup: StartupState::Ready,
         control: ControlState::none(),
         devices: Arc::new(devices),
+        capabilities: Arc::new(capabilities),
         configuration_revisions: revisions,
         duplicate_records: true,
         storage_pending: false,
@@ -441,6 +480,7 @@ fn maximum_profile_snapshot_and_sse_fit_the_bounded_output_budget() {
     let value = response::snapshot(&snapshot);
     let projected = samsung_tv_remote::control_client::projection::snapshot(&value).unwrap();
     assert_eq!(projected.devices, snapshot.devices);
+    assert_eq!(projected.capabilities, snapshot.capabilities);
     assert_eq!(
         projected.configuration_revisions,
         snapshot.configuration_revisions

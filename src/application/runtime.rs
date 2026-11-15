@@ -28,6 +28,16 @@ use setup::{LiveObservation, PairContext, PreparedPair};
 mod connection;
 use connection::{ConnectionContext, ConnectionMode, PreparedConnection, WakeState};
 
+#[cfg(feature = "p3-spike")]
+#[path = "runtime_diagnostic.rs"]
+mod diagnostic;
+
+enum OwnerSessionEvent {
+    Normal(TvSessionEvent),
+    #[cfg(feature = "p3-spike")]
+    Diagnostic(super::diagnostic::SessionObservation),
+}
+
 /// Explicit production defaults; small overrides permit deterministic pressure
 /// tests without thousands of tasks or a real network.
 #[derive(Debug, Clone)]
@@ -226,6 +236,9 @@ enum Completion {
 }
 
 struct Owner {
+    #[cfg(feature = "p3-spike")]
+    diagnostic: Option<diagnostic::Lease>,
+    capabilities: super::capabilities::CapabilityStore,
     coordinator: TvControlCoordinator,
     snapshot: Snapshot,
     operations: Operations,
@@ -235,8 +248,8 @@ struct Owner {
     storage: Option<(OperationId, Instant)>,
     remotes: HashMap<RequestId, (OperationId, Instant)>,
     timed_out: HashSet<OperationId>,
-    session_events: mpsc::Receiver<(u64, u64, TvSessionEvent)>,
-    session_sender: mpsc::Sender<(u64, u64, TvSessionEvent)>,
+    session_events: mpsc::Receiver<(u64, u64, OwnerSessionEvent)>,
+    session_sender: mpsc::Sender<(u64, u64, OwnerSessionEvent)>,
     session_task: Option<JoinHandle<()>>,
     restoring: bool,
     restore_deadline: Instant,
@@ -259,6 +272,7 @@ impl Owner {
             startup: StartupState::Restoring,
             control: ControlState::none(),
             devices: Arc::new(Vec::new()),
+            capabilities: Arc::new(Vec::new()),
             configuration_revisions: Arc::new(Vec::new()),
             duplicate_records: false,
             storage_pending: false,
@@ -270,6 +284,9 @@ impl Owner {
         };
         let (session_sender, session_events) = mpsc::channel(32);
         Self {
+            #[cfg(feature = "p3-spike")]
+            diagnostic: None,
+            capabilities: super::capabilities::CapabilityStore::default(),
             coordinator,
             snapshot,
             operations: Operations::new(epoch, limits.registry, limits.retention),
@@ -339,6 +356,9 @@ impl Owner {
                     self.report_drain(&mut report);
                 }
                 _ = clock.tick() => {
+                    #[cfg(feature = "p3-spike")]
+                    if self.check_diagnostic() { self.publish(None); }
+                    if self.capabilities.expire(Instant::now()) { self.publish(None); }
                     self.operations.expire();
                     self.expire_wake();
                     self.candidates.retain(|_, (_, _, expires)| *expires > Instant::now());
@@ -366,6 +386,30 @@ impl Owner {
                 }
                 event = self.session_events.recv() => {
                     if let Some((generation, session, event)) = event {
+                        #[cfg(not(feature = "p3-spike"))]
+                        let OwnerSessionEvent::Normal(event) = event;
+                        #[cfg(feature = "p3-spike")]
+                        let event = match event {
+                            OwnerSessionEvent::Normal(event) => event,
+                            OwnerSessionEvent::Diagnostic(observation) => {
+                                self.diagnostic_observation(generation, session, observation);
+                                continue;
+                            }
+                        };
+                        if matches!(event, TvSessionEvent::ImeStarted | TvSessionEvent::ImeEnded) {
+                            self.sync_capabilities();
+                            if let Some((device, current_generation, current_session)) = self.coordinator.evidence_session() {
+                                if generation == current_generation && session == current_session {
+                                    let context = super::capabilities::EvidenceContext { epoch: self.snapshot.epoch, selection_generation: generation, session };
+                                    let wall_ms = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)
+                                        .ok().and_then(|d| u64::try_from(d.as_millis()).ok()).unwrap_or(0);
+                                    if self.capabilities.ime(device, context, event == TvSessionEvent::ImeStarted, wall_ms, Instant::now()) {
+                                        self.publish(None);
+                                    }
+                                }
+                            }
+                            continue;
+                        }
                         self.coordinator.process_session_event(generation, session, event);
                         self.advance_remote();
                         self.publish(None);
@@ -427,6 +471,8 @@ impl Owner {
     fn message(&mut self, message: Message) {
         self.operations.expire();
         match message {
+            #[cfg(feature = "p3-spike")]
+            Message::Diagnostic(client, message) => self.diagnostic_message(client, message),
             Message::Fence(epoch, authorization, reply) => {
                 let result = if epoch != self.snapshot.epoch {
                     Err(ServiceError::StaleEpoch)
@@ -530,6 +576,14 @@ impl Owner {
                 .admit(client, request.key, request.command.clone())?;
         if !fresh {
             return Ok(receipt);
+        }
+        #[cfg(feature = "p3-spike")]
+        if self.diagnostic_busy() {
+            self.finish(receipt.id, Outcome::Rejected(Rejection::Busy));
+            return Ok(self
+                .operations
+                .lookup(client, &key)
+                .expect("reserved operation"));
         }
         let recovery = self.snapshot.startup == StartupState::RecoveryRequired
             && matches!(
@@ -831,12 +885,20 @@ impl Owner {
         let sender = self.session_sender.clone();
         self.session_task = Some(tokio::spawn(async move {
             while let Some(event) = events.next().await {
-                if sender.send((generation, session, event)).await.is_err() {
+                if sender
+                    .send((generation, session, OwnerSessionEvent::Normal(event)))
+                    .await
+                    .is_err()
+                {
                     return;
                 }
             }
             let _ = sender
-                .send((generation, session, TvSessionEvent::Disconnected))
+                .send((
+                    generation,
+                    session,
+                    OwnerSessionEvent::Normal(TvSessionEvent::Disconnected),
+                ))
                 .await;
         }));
     }
@@ -1214,12 +1276,17 @@ impl Owner {
     }
 
     fn publish(&mut self, operation: Option<OperationId>) {
+        #[cfg(feature = "p3-spike")]
+        self.check_diagnostic();
+        self.sync_capabilities();
         self.snapshot.revision += 1;
         self.snapshot.control = self.coordinator.app_state.clone();
         self.snapshot.wake = self.coordinator.wake_stage;
         self.snapshot.wake_operation = self.wakes.keys().next().copied();
         self.snapshot.pairing_pending = !self.pairs.is_empty();
         if *self.snapshot.devices != self.coordinator.saved_devices {
+            // History only changes membership with the saved set; skip the scan otherwise.
+            self.capabilities.retain(&self.coordinator.saved_devices);
             self.snapshot.devices = Arc::new(self.coordinator.saved_devices.clone());
             self.snapshot.duplicate_records =
                 self.snapshot
@@ -1233,6 +1300,18 @@ impl Owner {
                     });
         }
         self.snapshot.storage_pending = self.storage.is_some() || self.restoring;
+        let capabilities = self
+            .snapshot
+            .devices
+            .iter()
+            .map(|d| {
+                self.capabilities
+                    .summary(d.id, self.capability_reason(d.id))
+            })
+            .collect::<Vec<_>>();
+        if *self.snapshot.capabilities != capabilities {
+            self.snapshot.capabilities = Arc::new(capabilities);
+        }
         let event = Event {
             snapshot: self.snapshot.clone(),
             operation,
@@ -1242,6 +1321,40 @@ impl Owner {
         // free slot for a special overflow message. Consumers must resubscribe.
         self.subscribers
             .retain(|(_, sender)| sender.try_send(event.clone()).is_ok());
+    }
+
+    fn capability_reason(&self, device: DeviceId) -> crate::domain::capability::CapabilityReason {
+        use crate::domain::capability::CapabilityReason;
+        if self.snapshot.startup != StartupState::Ready || self.snapshot.admission_closed {
+            CapabilityReason::RecoveryBlocked
+        } else if self.coordinator.app_state.selected_device() != Some(device) {
+            CapabilityReason::NotSelected
+        } else if self.coordinator.evidence_session().is_none() {
+            CapabilityReason::Disconnected
+        } else {
+            CapabilityReason::Connected
+        }
+    }
+
+    fn sync_capabilities(&mut self) {
+        let active =
+            if self.snapshot.startup == StartupState::Ready && !self.snapshot.admission_closed {
+                self.coordinator
+                    .evidence_session()
+                    .map(|(device, generation, session)| {
+                        (
+                            device,
+                            super::capabilities::EvidenceContext {
+                                epoch: self.snapshot.epoch,
+                                selection_generation: generation,
+                                session,
+                            },
+                        )
+                    })
+            } else {
+                None
+            };
+        self.capabilities.session(active);
     }
 }
 

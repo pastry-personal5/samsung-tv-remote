@@ -18,6 +18,12 @@ pub enum Action {
 }
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Mode {
+    #[cfg(feature = "p3-spike")]
+    P3Spike {
+        base: Option<PathBuf>,
+        condition: String,
+        output: PathBuf,
+    },
     Gui,
     Help,
     McpHeaders {
@@ -53,6 +59,31 @@ pub fn parse(arguments: &[OsString]) -> Result<Mode, LaunchError> {
     }
     if arguments.len() == 1 && arguments[0] == "--help" {
         return Ok(Mode::Help);
+    }
+    #[cfg(feature = "p3-spike")]
+    if arguments[0] == "--p3-spike" {
+        let (condition, output, base) = match arguments {
+            [_, condition, output] => (condition, PathBuf::from(output), None),
+            [_, condition, output, flag, base]
+                if flag == "--fake-profile" && PathBuf::from(base).is_absolute() =>
+            {
+                (condition, PathBuf::from(output), Some(PathBuf::from(base)))
+            }
+            _ => return Err(LaunchError::Denied),
+        };
+        let condition = condition
+            .to_str()
+            .filter(|v| matches!(*v, "baseline" | "reconnect" | "wake-reconnect"))
+            .ok_or(LaunchError::Denied)?
+            .to_owned();
+        if !output.is_absolute() {
+            return Err(LaunchError::Denied);
+        }
+        return Ok(Mode::P3Spike {
+            base,
+            condition,
+            output,
+        });
     }
     if arguments[0] == "--mcp-headers" {
         let base = match arguments {
@@ -225,6 +256,21 @@ pub fn dispatch(arguments: &[OsString]) -> Option<i32> {
             return Some(1);
         }
     };
+    #[cfg(feature = "p3-spike")]
+    if let Mode::P3Spike {
+        base,
+        condition,
+        output,
+    } = mode
+    {
+        return Some(foreground(
+            base,
+            LaunchError::code,
+            move |profile, executable| {
+                super::diagnostic_controller::run(profile, executable, condition, output)
+            },
+        ));
+    }
     if let Mode::McpHeaders { base } = mode {
         let destination = std::env::var("CLAUDE_CODE_MCP_SERVER_URL").unwrap_or_default();
         return Some(foreground(

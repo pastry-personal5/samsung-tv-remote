@@ -1,3 +1,6 @@
+#[cfg(feature = "p3-spike")]
+#[path = "diagnostic.rs"]
+mod diagnostic;
 use std::net::SocketAddr;
 use std::time::Duration;
 
@@ -53,6 +56,8 @@ pub enum SessionEvent {
 }
 
 pub struct ActiveSession {
+    #[cfg(feature = "p3-spike")]
+    pub diagnostic: crate::application::diagnostic::DiagnosticPort,
     pub commands: mpsc::Sender<SessionCommand>,
     pub events: mpsc::Receiver<SessionEvent>,
     pub task: tokio::task::JoinHandle<()>,
@@ -62,11 +67,17 @@ pub struct ActiveSession {
 pub struct SamsungGateway;
 
 struct SessionControl {
+    #[cfg(feature = "p3-spike")]
+    diagnostic: Option<crate::application::diagnostic::DiagnosticPort>,
     commands: mpsc::Sender<SessionCommand>,
     task: tokio::task::JoinHandle<()>,
 }
 
 impl TvSessionControl for SessionControl {
+    #[cfg(feature = "p3-spike")]
+    fn take_diagnostic(&mut self) -> Option<crate::application::diagnostic::DiagnosticPort> {
+        self.diagnostic.take()
+    }
     fn try_click(&self, id: RequestId, action: RemoteAction) -> bool {
         self.commands
             .try_send(SessionCommand::Click { id, action })
@@ -100,6 +111,8 @@ impl TvConnection for Session {
         });
         ActiveTvSession {
             control: Box::new(SessionControl {
+                #[cfg(feature = "p3-spike")]
+                diagnostic: Some(active.diagnostic),
                 commands: active.commands,
                 task: active.task,
             }),
@@ -214,8 +227,13 @@ impl Session {
     pub fn start_actor(self) -> ActiveSession {
         let (command_sender, commands) = mpsc::channel(1);
         let (event_sender, event_receiver) = mpsc::channel(16);
+        #[cfg(not(feature = "p3-spike"))]
         let task = tokio::spawn(run_actor(self.socket, commands, event_sender));
+        #[cfg(feature = "p3-spike")]
+        let (task, diagnostic) = diagnostic::start(self.socket, commands, event_sender);
         ActiveSession {
+            #[cfg(feature = "p3-spike")]
+            diagnostic,
             commands: command_sender,
             events: event_receiver,
             task,
@@ -255,6 +273,7 @@ where
     }
 }
 
+#[cfg(not(feature = "p3-spike"))]
 async fn run_actor(
     socket: WebSocketStream<TlsStream<TcpStream>>,
     mut commands: mpsc::Receiver<SessionCommand>,

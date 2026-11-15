@@ -116,4 +116,53 @@ esac
                 .to_string_lossy()
                 .starts_with("bundle-staging.")));
     }
+    // A diagnostic build must use a new preserved path and record its exact
+    // source provenance before signing, even while the ordinary bundle is live.
+    executable(&root.path().join("bin/git"), "#!/bin/zsh\ncase \"$1\" in\nrev-parse) print 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';;\nstatus) print ' M synthetic.rs';;\n*) exit 1;;\nesac\n");
+    executable(
+        &root.path().join("bin/cargo"),
+        "#!/bin/zsh\nprint -r -- \"$*\" > \"$P3_CARGO_ARGS\"\n",
+    );
+    let args_file = root.path().join("cargo-args.txt");
+    let output = Command::new("/bin/zsh")
+        .arg(root.path().join("scripts/build_macos_bundle.sh"))
+        .arg("--p3-spike-candidate")
+        .env("SAMSUNG_TV_CODESIGN_IDENTITY", "apple")
+        .env("P3_CARGO_ARGS", &args_file)
+        .env(
+            "PATH",
+            format!("{}:/usr/bin:/bin", root.path().join("bin").display()),
+        )
+        .env("BUNDLE_GUARD_ACTIVE", "yes")
+        .env("BUNDLE_GUARD_PATH", &bundle_guard_path)
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "{output:?}");
+    assert_eq!(
+        fs::read_to_string(args_file).unwrap().trim(),
+        "build --release --features p3-spike"
+    );
+    assert_eq!(fs::read_to_string(&binary).unwrap(), "new");
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    let candidate = std::path::PathBuf::from(
+        stdout
+            .lines()
+            .find_map(|line| line.strip_prefix("Locally signed bundle created at "))
+            .unwrap(),
+    );
+    assert!(candidate
+        .parent()
+        .unwrap()
+        .extension()
+        .is_some_and(|v| v == "noindex"));
+    assert_ne!(candidate, bundle);
+    let provenance: serde_json::Value = serde_json::from_slice(
+        &fs::read(candidate.join("Contents/Resources/p3-spike-build.json")).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(
+        provenance["commit"],
+        "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    );
+    assert_eq!(provenance["dirty"], true);
 }

@@ -243,10 +243,24 @@ impl TvControlCoordinator {
         (session_id, events)
     }
 
+    #[cfg(feature = "p3-spike")]
+    pub(super) fn take_diagnostic(&mut self) -> Option<super::diagnostic::DiagnosticPort> {
+        self.active_runtime.as_mut()?.control.take_diagnostic()
+    }
+
     pub(super) fn active_session_matches(&self, generation: u64, session_id: u64) -> bool {
         self.active_runtime.as_ref().is_some_and(|active| {
             active.generation == generation && active.session_id == session_id
         })
+    }
+
+    pub(super) fn evidence_session(&self) -> Option<(crate::domain::DeviceId, u64, u64)> {
+        let active = self.active_runtime.as_ref()?;
+        let device = self.app_state.selected_device()?;
+        (active.generation == self.app_state.selection_generation()
+            && self.app_state.connection_state() == super::ConnectionState::Ready
+            && self.app_state.pairing_state() == super::PairingState::Ready)
+            .then_some((device, active.generation, active.session_id))
     }
 
     pub(super) fn try_click(&self, id: RequestId, action: crate::domain::RemoteAction) -> bool {
@@ -316,6 +330,7 @@ impl TvControlCoordinator {
             return SessionImpact::Ignored;
         }
         match event {
+            TvSessionEvent::ImeStarted | TvSessionEvent::ImeEnded => SessionImpact::Ignored,
             TvSessionEvent::Written(id)
             | TvSessionEvent::Uncertain(id)
             | TvSessionEvent::NotSent(id) => {

@@ -1,4 +1,7 @@
 //! Bounded native HTTP client. Ordinary calls are never retried here.
+#[cfg(feature = "p3-spike")]
+#[path = "diagnostic_stream.rs"]
+pub mod diagnostic_stream;
 use crate::server::bootstrap::BootstrapError;
 use crate::server::control_http::response::MAX_OUTPUT_BYTES;
 use bytes::Bytes;

@@ -80,6 +80,14 @@ A successful socket write means a command was sent; it does not prove that
 power, volume, or another TV state changed. Do not replay uncertain actions
 automatically.
 
+The owner also publishes bounded, in-memory capability summaries per saved TV.
+Support, evidence source and freshness are separate from connection readiness
+and write outcomes. Session fences clear live IME and stale historical facts
+atomically with lifecycle publication. HTTP, SSE, typed clients and MCP
+`inspect_tv` share these facts; reads cause no acquisition. The Samsung adapter
+has no production capability parser yet, so product facts remain unknown pending the
+[P3-M1 evidence gate](phase-3/milestone-01-implementation.md).
+
 Discovery and manual entry yield untrusted candidates. Check TV probes the
 secure endpoint and presents its observed certificate identity. Pairing
 requires confirmation of the intended TV and approval on that TV. Pairing

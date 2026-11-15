@@ -37,6 +37,13 @@ use tokio::sync::{mpsc, watch};
 
 #[derive(Default)]
 struct Effects {
+    #[cfg(feature = "p3-spike")]
+    diagnostic_requests:
+        Mutex<Vec<mpsc::Receiver<samsung_tv_remote::application::diagnostic::SessionRequest>>>,
+    #[cfg(feature = "p3-spike")]
+    diagnostic_events:
+        Mutex<Vec<mpsc::Sender<samsung_tv_remote::application::diagnostic::SessionObservation>>>,
+    sessions: Mutex<Vec<mpsc::Sender<TvSessionEvent>>>,
     discovery: AtomicUsize,
     probes: AtomicUsize,
     pairs: AtomicUsize,
@@ -104,10 +111,18 @@ impl CredentialStore for Secrets {
 struct Ports(Arc<Effects>);
 struct Connection(Arc<Effects>);
 struct Control {
+    #[cfg(feature = "p3-spike")]
+    diagnostic: Option<samsung_tv_remote::application::diagnostic::DiagnosticPort>,
     sender: Option<mpsc::Sender<TvSessionEvent>>,
     effects: Arc<Effects>,
 }
 impl TvSessionControl for Control {
+    #[cfg(feature = "p3-spike")]
+    fn take_diagnostic(
+        &mut self,
+    ) -> Option<samsung_tv_remote::application::diagnostic::DiagnosticPort> {
+        self.diagnostic.take()
+    }
     fn try_click(&self, id: RequestId, _action: RemoteAction) -> bool {
         self.effects.remote_attempts.fetch_add(1, Ordering::SeqCst);
         let mode = self.effects.remote_mode.load(Ordering::SeqCst);
@@ -172,8 +187,22 @@ impl TvConnection for Connection {
     }
     fn start(self: Box<Self>) -> ActiveTvSession {
         let (sender, receiver) = mpsc::channel(32);
+        self.0.sessions.lock().unwrap().push(sender.clone());
+        #[cfg(feature = "p3-spike")]
+        let diagnostic = {
+            let (commands, requests) = mpsc::channel(1);
+            let (events, observed) = mpsc::channel(16);
+            self.0.diagnostic_requests.lock().unwrap().push(requests);
+            self.0.diagnostic_events.lock().unwrap().push(events);
+            samsung_tv_remote::application::diagnostic::DiagnosticPort {
+                commands,
+                events: observed,
+            }
+        };
         ActiveTvSession {
             control: Box::new(Control {
+                #[cfg(feature = "p3-spike")]
+                diagnostic: Some(diagnostic),
                 sender: Some(sender),
                 effects: self.0,
             }),
@@ -2399,3 +2428,7 @@ async fn stalled_large_responses_keep_their_query_reservations_until_connection_
     assert_eq!(h.effects.writes.load(Ordering::SeqCst), 0);
     h.close().await;
 }
+
+#[cfg(feature = "p3-spike")]
+#[path = "support/diagnostic_http.rs"]
+mod diagnostic_http;

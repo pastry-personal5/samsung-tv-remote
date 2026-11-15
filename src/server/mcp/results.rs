@@ -7,6 +7,41 @@ use serde_json::{json, Value};
 pub const MAX_TEXT_CHARS: usize = 80;
 pub const MAX_RESULT_BYTES: usize = 128 * 1024;
 
+fn capability_schema() -> Value {
+    let context = object(
+        json!({"selection_generation":counter_schema(),"session":counter_schema()}),
+        &["selection_generation", "session"],
+    );
+    let fact = object(
+        json!({
+            "key":{"enum":["installed_apps","app_launch","native_ime","hdmi1","hdmi2","hdmi3","tuner","sources"]},
+            "support":{"enum":["unknown","supported","unsupported"]},
+            "source":{"enum":["none","tv_response","tv_event","user_confirmation"]},
+            "freshness":{"enum":["unobserved","current","stale"]},
+            "observed_at_unix_ms":nullable(counter_schema()),"context":nullable(context)
+        }),
+        &[
+            "key",
+            "support",
+            "source",
+            "freshness",
+            "observed_at_unix_ms",
+            "context",
+        ],
+    );
+    object(
+        json!({"device_id":uuid_schema(),"evidence_epoch":nullable(uuid_schema()),"reason":{"enum":["evidence_missing","evidence_stale","not_selected","disconnected","recovery_blocked","feature_unsupported","connected","observed"]},
+        "ime_active":{"type":"boolean"},"facts":{"type":"array","minItems":8,"maxItems":8,"items":fact}}),
+        &[
+            "device_id",
+            "evidence_epoch",
+            "reason",
+            "ime_active",
+            "facts",
+        ],
+    )
+}
+
 pub fn current(snapshot: &Snapshot) -> Value {
     json!({"server_epoch":wire::epoch(snapshot.epoch),"selected":snapshot.control.selected_device().map(wire::device),"selection_generation":wire::Counter(snapshot.control.selection_generation())})
 }
@@ -132,7 +167,7 @@ pub(super) fn schema(name: &str) -> Value {
             properties.as_object_mut().unwrap().extend(json!({
                 "server_epoch":uuid_schema(),"revision":counter_schema(),"selected":nullable(uuid_schema()),"selection_generation":counter_schema(),
                 "startup":{"type":"string"},"admission_closed":{"type":"boolean"},
-                "tv":nullable(object(json!({"device_id":uuid_schema(),"label":{"type":"string","maxLength":MAX_TEXT_CHARS},"label_truncated":{"type":"boolean"},"host":{"type":"string"},"config_revision":counter_schema(),"wake":object(json!({"wired_mac":{"type":["string","null"]},"wifi_mac":{"type":["string","null"]},"active_interface":{"enum":["Wired","WiFi",null]}}), &["wired_mac","wifi_mac","active_interface"])}), &["device_id","label","label_truncated","host","config_revision","wake"])),
+                "tv":nullable(object(json!({"capabilities":capability_schema(),"device_id":uuid_schema(),"label":{"type":"string","maxLength":MAX_TEXT_CHARS},"label_truncated":{"type":"boolean"},"host":{"type":"string"},"config_revision":counter_schema(),"wake":object(json!({"wired_mac":{"type":["string","null"]},"wifi_mac":{"type":["string","null"]},"active_interface":{"enum":["Wired","WiFi",null]}}), &["wired_mac","wifi_mac","active_interface"])}), &["device_id","label","label_truncated","host","config_revision","wake","capabilities"])),
                 "connection":{"type":"string"},"pairing":{"type":"string"},"wake":nullable(wake_schema()),
                 "forget_recovery":{"type":["object","null"]},"pairing_recovery":{"type":["object","null"]}
             }).as_object().unwrap().clone());

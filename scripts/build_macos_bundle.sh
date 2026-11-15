@@ -10,7 +10,7 @@ if (( $# > 1 )); then
 fi
 case "${1:-}" in
     ''|--unsigned-preview) ;;
-    --acceptance-candidate) ;;
+    --acceptance-candidate|--p3-spike-candidate) ;;
     *) print -u2 'Unknown bundle option.'; exit 2 ;;
 esac
 
@@ -22,11 +22,15 @@ fi
 
 # A running build-path server must retain its executable for peer validation.
 # Candidate builds always use a new path and need no shutdown.
-if [[ "${1:-}" != "--acceptance-candidate" ]]; then
+if [[ "${1:-}" != "--acceptance-candidate" && "${1:-}" != "--p3-spike-candidate" ]]; then
     python3 scripts/install_macos_bundle.py check-idle "$repo_root/target/bundle/Samsung TV Remote.app"
 fi
 
-cargo build --release
+if [[ "${1:-}" == "--p3-spike-candidate" ]]; then
+    cargo build --release --features p3-spike
+else
+    cargo build --release
+fi
 
 # Validate a new artifact before touching the ordinary bundle. A saved local
 # self-signed identity must not replace an app authorized by an Apple server.
@@ -41,7 +45,7 @@ cleanup_staging() {
 }
 trap cleanup_staging EXIT
 staged_bundle="$staging/Samsung TV Remote.app"
-if [[ "${1:-}" == "--acceptance-candidate" ]]; then
+if [[ "${1:-}" == "--acceptance-candidate" || "${1:-}" == "--p3-spike-candidate" ]]; then
     # Preserve a live older bundle for signed update/compatibility checks.
     # Each candidate is new; no running executable is overwritten in place.
     # Keep review-only candidates out of macOS application discovery. LaunchServices
@@ -77,6 +81,20 @@ cat > "$contents/Info.plist" <<'PLIST'
 </dict>
 </plist>
 PLIST
+
+if [[ "${1:-}" == "--p3-spike-candidate" ]]; then
+    python3 - "$contents/Resources/p3-spike-build.json" <<'PYMETA'
+import json
+import subprocess
+import sys
+from pathlib import Path
+commit = subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip()
+dirty = bool(subprocess.check_output(["git", "status", "--porcelain"], text=True))
+if len(commit) not in (40, 64) or any(c not in "0123456789abcdef" for c in commit):
+    raise SystemExit("Invalid build commit identity")
+Path(sys.argv[1]).write_text(json.dumps({"commit": commit, "dirty": dirty}) + "\n")
+PYMETA
+fi
 
 plutil -lint "$contents/Info.plist"
 if [[ "${1:-}" != "--unsigned-preview" ]]; then

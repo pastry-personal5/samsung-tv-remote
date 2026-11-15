@@ -5,3 +5,5 @@ pub mod private_files;
 pub mod samsung;
 pub mod ssdp_discovery;
 pub mod wake_udp;
+
+pub(crate) mod unique_json;

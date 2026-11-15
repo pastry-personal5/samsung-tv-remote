@@ -41,9 +41,16 @@ pub enum TvSessionEvent {
     Uncertain(RequestId),
     Disconnected,
     TokenRejected,
+    /// Semantic lifecycle only; no field identifier, content or raw frame.
+    ImeStarted,
+    ImeEnded,
 }
 
 pub trait TvSessionControl: Send {
+    #[cfg(feature = "p3-spike")]
+    fn take_diagnostic(&mut self) -> Option<super::diagnostic::DiagnosticPort> {
+        None
+    }
     fn try_click(&self, id: RequestId, action: RemoteAction) -> bool;
     fn abort(&mut self);
 }
