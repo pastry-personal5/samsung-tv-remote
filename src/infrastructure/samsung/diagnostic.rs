@@ -310,4 +310,22 @@ mod tests {
             );
         }
     }
+    // P3-M2 keeps this frozen copy; the product codec must emit identical frames.
+    #[test]
+    fn source_frames_match_the_product_codec() {
+        use crate::domain::RemoteAction;
+        use crate::infrastructure::samsung::codec::encode_click;
+        for (key, action) in [
+            (SourceKey::Hdmi1, RemoteAction::Hdmi1),
+            (SourceKey::Hdmi2, RemoteAction::Hdmi2),
+            (SourceKey::Hdmi3, RemoteAction::Hdmi3),
+            (SourceKey::Tuner, RemoteAction::Tuner),
+            (SourceKey::Sources, RemoteAction::SourceMenu),
+        ] {
+            let ours: Value =
+                serde_json::from_str(&encode(&WireExperiment::Source(key)).unwrap()).unwrap();
+            let product: Value = serde_json::from_str(&encode_click(action).unwrap()).unwrap();
+            assert_eq!(ours, product);
+        }
+    }
 }

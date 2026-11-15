@@ -133,7 +133,7 @@ async fn isolated_profile_restarts_with_synthetic_credentials_and_zero_startup_e
     let client = runtime.client(ClientId(1));
     let restored = ready(&client).await;
     assert_ne!(restored.epoch, initial.epoch);
-    assert_eq!(restored.devices.as_slice(), std::slice::from_ref(&saved));
+    assert_eq!(restored.devices.as_slice(), std::slice::from_ref(&*saved));
     assert_eq!(restored.control.selected_device(), Some(saved.id));
     assert_eq!(restored.control.selection_generation(), 0);
     assert_eq!(profile.effects.connections.load(Ordering::SeqCst), 0);

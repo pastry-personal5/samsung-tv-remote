@@ -94,6 +94,12 @@ pub trait TvSetupPort: Send + Sync {
         wake: WakeConfiguration,
     ) -> Result<SavedDevice, RepositoryError>;
     fn forget(&self, id: DeviceId) -> ForgetResult;
+    // Required, not defaulted: a forwarding adapter must not silently fail it.
+    fn save_sources(
+        &self,
+        id: DeviceId,
+        sources: super::sources::SourceConfiguration,
+    ) -> Result<SavedDevice, RepositoryError>;
     // Legacy adapters fail closed until they explicitly implement recovery.
     fn pending_recovery(&self) -> Result<Option<ForgetMarker>, RepositoryError> {
         Err(RepositoryError::Unavailable)
@@ -185,6 +191,22 @@ where
 
     fn forget(&self, id: DeviceId) -> ForgetResult {
         Self::forget(self, id)
+    }
+
+    fn save_sources(
+        &self,
+        id: DeviceId,
+        sources: super::sources::SourceConfiguration,
+    ) -> Result<SavedDevice, RepositoryError> {
+        let mut device = self
+            .devices
+            .list()?
+            .into_iter()
+            .find(|device| device.id == id)
+            .ok_or(RepositoryError::Corrupt)?;
+        device.sources = sources;
+        self.devices.save(&device)?;
+        Ok(device)
     }
 
     fn pending_recovery(&self) -> Result<Option<ForgetMarker>, RepositoryError> {
@@ -340,6 +362,7 @@ impl<R: DeviceRepository, S: CredentialStore, T: CertificateTrustStore> TvSetupS
             return Err(SetupError::InvalidLabel);
         }
         let device = SavedDevice {
+            sources: Default::default(),
             id: DeviceId::generate(),
             label: label.to_owned(),
             host: host.clone(),

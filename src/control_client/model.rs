@@ -54,6 +54,8 @@ codes! {
     InputTooLarge => "input_too_large",
     InvalidConfirmation => "invalid_confirmation",
     WakeNotConfigured => "wake_not_configured",
+    SourceUnconfigured => "source_unconfigured",
+    SourceHidden => "source_hidden",
     ObservationExpired => "observation_expired",
     InvalidLabel => "invalid_label",
     PartialSetup => "partial_setup",

@@ -167,7 +167,7 @@ pub(super) fn schema(name: &str) -> Value {
             properties.as_object_mut().unwrap().extend(json!({
                 "server_epoch":uuid_schema(),"revision":counter_schema(),"selected":nullable(uuid_schema()),"selection_generation":counter_schema(),
                 "startup":{"type":"string"},"admission_closed":{"type":"boolean"},
-                "tv":nullable(object(json!({"capabilities":capability_schema(),"device_id":uuid_schema(),"label":{"type":"string","maxLength":MAX_TEXT_CHARS},"label_truncated":{"type":"boolean"},"host":{"type":"string"},"config_revision":counter_schema(),"wake":object(json!({"wired_mac":{"type":["string","null"]},"wifi_mac":{"type":["string","null"]},"active_interface":{"enum":["Wired","WiFi",null]}}), &["wired_mac","wifi_mac","active_interface"])}), &["device_id","label","label_truncated","host","config_revision","wake","capabilities"])),
+                "tv":nullable(object(json!({"capabilities":capability_schema(),"device_id":uuid_schema(),"label":{"type":"string","maxLength":MAX_TEXT_CHARS},"label_truncated":{"type":"boolean"},"host":{"type":"string"},"config_revision":counter_schema(),"wake":object(json!({"wired_mac":{"type":["string","null"]},"wifi_mac":{"type":["string","null"]},"active_interface":{"enum":["Wired","WiFi",null]}}), &["wired_mac","wifi_mac","active_interface"]),"sources":{"type":"object"}}), &["device_id","label","label_truncated","host","config_revision","wake","sources","capabilities"])),
                 "connection":{"type":"string"},"pairing":{"type":"string"},"wake":nullable(wake_schema()),
                 "forget_recovery":{"type":["object","null"]},"pairing_recovery":{"type":["object","null"]}
             }).as_object().unwrap().clone());

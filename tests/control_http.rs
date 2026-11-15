@@ -456,6 +456,27 @@ impl Harness {
         path: &str,
         body: Value,
     ) -> hyper::Response<Incoming> {
+        let body = if method == "GET" {
+            Vec::new()
+        } else {
+            serde_json::to_vec(&body).unwrap()
+        };
+        self.send(client, method, path, body).await
+    }
+    /// Exact bytes, for bodies a `Value` cannot express (duplicate keys).
+    async fn raw_json(&self, client: u8, method: &str, path: &str, body: String) -> (u16, Value) {
+        let response = self.send(client, method, path, body.into_bytes()).await;
+        let status = response.status().as_u16();
+        let bytes = response.into_body().collect().await.unwrap().to_bytes();
+        (status, serde_json::from_slice(&bytes).unwrap())
+    }
+    async fn send(
+        &self,
+        client: u8,
+        method: &str,
+        path: &str,
+        body: Vec<u8>,
+    ) -> hyper::Response<Incoming> {
         let stream = TcpStream::connect((std::net::Ipv4Addr::LOCALHOST, self.port))
             .await
             .unwrap();
@@ -465,11 +486,6 @@ impl Harness {
         tokio::spawn(async move {
             let _ = connection.await;
         });
-        let body = if method == "GET" {
-            Vec::new()
-        } else {
-            serde_json::to_vec(&body).unwrap()
-        };
         let request = Request::builder()
             .method(method)
             .uri(path)
@@ -727,6 +743,14 @@ async fn protected_readiness_unknown_routes_and_gui_management_have_no_tv_effect
     assert_eq!(h.stops.0.load(Ordering::SeqCst), 1);
     let (status, _) = h.json(1, "GET", "/unknown", Value::Null).await;
     assert_eq!(status, 404);
+    // The sources route uses the same authenticated mutation policy as /wake.
+    let device = "00000000-0000-0000-0000-000000000001";
+    for path in ["wake", "sources"] {
+        let (status, _) = h
+            .json(3, "PUT", &format!("/v1/devices/{device}/{path}"), json!({}))
+            .await;
+        assert_eq!(status, 401, "{path}");
+    }
     assert_eq!(h.effects.connections.load(Ordering::SeqCst), 0);
     assert_eq!(h.effects.packets.load(Ordering::SeqCst), 0);
     assert_eq!(h.effects.probes.load(Ordering::SeqCst), 0);
@@ -2432,3 +2456,129 @@ async fn stalled_large_responses_keep_their_query_reservations_until_connection_
 #[cfg(feature = "p3-spike")]
 #[path = "support/diagnostic_http.rs"]
 mod diagnostic_http;
+
+#[tokio::test]
+async fn sources_round_trip_over_http_and_native_and_malformed_bodies_have_no_effects() {
+    let h = Harness::new().await;
+    let device = h.pair().await;
+    let state = h.state().await;
+    let generation = state["selection_generation"].clone();
+    let entry = |state: &str| json!({"state":state});
+    let path = format!("/v1/devices/{device}/sources");
+    let body = |sources: Value, revision: &str| json!({"device_id":device,"selection_generation":generation,"expected_config_revision":revision,"sources":sources});
+    let valid = json!({"hdmi1":{"state":"shown","label":"  PlayStation "},"hdmi2":entry("hidden"),"hdmi3":entry("unconfigured"),"tuner":{"state":"shown"}});
+    let mut malformed = vec![];
+    let mut missing = valid.clone();
+    missing.as_object_mut().unwrap().remove("tuner");
+    malformed.push(missing);
+    let mut unknown = valid.clone();
+    unknown["hdmi4"] = entry("hidden");
+    malformed.push(unknown);
+    for bad in [
+        json!({"state":"hidden","label":"x"}),
+        json!({"state":"shown","label":""}),
+        json!({"state":"shown","label":"   "}),
+        json!({"state":"shown","label":"a\u{202E}b"}),
+        json!({"state":"shown","label":"a".repeat(25)}),
+        json!({"state":"shown","confirmed_at_unix_ms":"5"}),
+        json!({"state":"active"}),
+    ] {
+        let mut value = valid.clone();
+        value["hdmi3"] = bad;
+        malformed.push(value);
+    }
+    let writes = h.effects.writes.load(Ordering::SeqCst);
+    let epoch = state["server_epoch"].as_str().unwrap();
+    for sources in malformed {
+        let mut request = body(sources.clone(), "0");
+        request["server_epoch"] = json!(epoch);
+        request["operation_key"] = json!(uuid::Uuid::new_v4().to_string());
+        let (status, rejected) = h.json(1, "PUT", &path, request).await;
+        assert_eq!(
+            (status, rejected["error"]["code"].as_str()),
+            (400, Some("invalid_request")),
+            "{sources}"
+        );
+    }
+    // A duplicate key is rejected even though serde_json::Value would hide it.
+    let duplicate = format!(
+        r#"{{"server_epoch":"{epoch}","operation_key":"{}","device_id":"{device}","selection_generation":{generation},"expected_config_revision":"0","sources":{{"hdmi1":{{"state":"hidden"}},"hdmi1":{{"state":"shown"}},"hdmi2":{{"state":"hidden"}},"hdmi3":{{"state":"hidden"}},"tuner":{{"state":"hidden"}}}}}}"#,
+        uuid::Uuid::new_v4()
+    );
+    let (status, rejected) = h.raw_json(1, "PUT", &path, duplicate).await;
+    assert_eq!(
+        (status, rejected["error"]["code"].as_str()),
+        (400, Some("invalid_request"))
+    );
+    assert_eq!(h.state().await["devices"][0]["config_revision"], "0");
+
+    // Hidden/unconfigured rejections are 412s, before connection guards.
+    let (_, unconfigured) = h
+        .mutate(
+            1,
+            "POST",
+            "/v1/remote-actions",
+            json!({"device_id":device,"selection_generation":generation,"action":"Hdmi1"}),
+        )
+        .await;
+    assert_eq!(unconfigured["error"]["code"], "source_unconfigured");
+
+    let (_, saved) = h.mutate(1, "PUT", &path, body(valid, "0")).await;
+    assert_eq!(saved["result"]["kind"], "saved", "{saved}");
+    assert_eq!(saved["terminal_state"]["config_revision"], "1");
+    let state = h.state().await;
+    let entry = &state["devices"][0];
+    assert_eq!(entry["sources"]["hdmi1"]["label"], "PlayStation");
+    assert_eq!(entry["sources"]["hdmi2"]["state"], "hidden");
+    assert_eq!(entry["sources"]["tuner"]["label"], Value::Null);
+    let facts = entry["capabilities"]["facts"].as_array().unwrap();
+    let fact = |key: &str| facts.iter().find(|f| f["key"] == key).unwrap().clone();
+    assert_eq!(fact("hdmi1")["support"], "supported");
+    assert_eq!(fact("hdmi1")["context"], Value::Null);
+    assert_eq!(fact("hdmi2")["support"], "unknown");
+    assert_eq!(fact("sources")["support"], "unknown");
+    // Disconnected durable facts decode natively; the editor reads the same block.
+    let native = samsung_tv_remote::control_client::projection::snapshot(&state).unwrap();
+    assert!(matches!(
+        native.devices[0].sources.ports[0],
+        samsung_tv_remote::application::sources::SourceSetting::Shown { .. }
+    ));
+    let (_, detail) = h
+        .json(2, "GET", &format!("/v1/devices/{device}"), Value::Null)
+        .await;
+    assert_eq!(detail["sources"], entry["sources"]);
+    // A source edit makes a Wake edit at the old revision stale.
+    let (_, stale) = h
+        .mutate(1, "PUT", &format!("/v1/devices/{device}/wake"), json!({"device_id":device,"selection_generation":generation,"expected_config_revision":"0","wired_mac":null,"wifi_mac":null,"active_interface":null}))
+        .await;
+    assert_eq!(stale["error"]["code"], "stale_config");
+
+    let (_, hidden) = h
+        .mutate(
+            1,
+            "POST",
+            "/v1/remote-actions",
+            json!({"device_id":device,"selection_generation":generation,"action":"Hdmi2"}),
+        )
+        .await;
+    assert_eq!(hidden["error"]["code"], "source_hidden");
+    assert_eq!(h.effects.writes.load(Ordering::SeqCst), writes);
+    h.mutate(
+        1,
+        "POST",
+        "/v1/connections",
+        json!({"device_id":device,"selection_generation":generation}),
+    )
+    .await;
+    let (_, written) = h
+        .mutate(
+            1,
+            "POST",
+            "/v1/remote-actions",
+            json!({"device_id":device,"selection_generation":generation,"action":"Hdmi1"}),
+        )
+        .await;
+    assert_eq!(written["result"]["kind"], "written");
+    assert_eq!(h.effects.writes.load(Ordering::SeqCst), writes + 1);
+    h.close().await;
+}

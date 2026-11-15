@@ -7,6 +7,8 @@ mod lifecycle;
 mod mcp;
 #[path = "remote_probe.rs"]
 mod remote_probe;
+#[path = "sources.rs"]
+mod sources;
 #[path = "workflows.rs"]
 mod workflows;
 use super::ui_message::{Message, SettingsPage, Shortcut};
@@ -73,6 +75,7 @@ pub struct App {
     wake_dirty: bool,
     wake_save_requested: bool,
     wake_tick: bool,
+    source_drafts: sources::SourceDrafts,
     launch_connected: bool,
     sequence: u64,
     intents: HashMap<u64, LocalIntent>,
@@ -115,6 +118,7 @@ impl App {
                 wake_dirty: false,
                 wake_save_requested: false,
                 wake_tick: false,
+                source_drafts: Default::default(),
                 launch_connected: false,
                 sequence: 0,
                 intents: HashMap::new(),
@@ -410,6 +414,13 @@ impl App {
                 self.auto_save_wake_configuration()
             }
             Message::ReloadWakeSettings => self.reload_client_wake(),
+            message @ (Message::SendSource(_)
+            | Message::EditSource(..)
+            | Message::ConfirmShowSource
+            | Message::CancelShowSource
+            | Message::SourceLabelChanged(..)
+            | Message::SaveSourceLabel(_)
+            | Message::OpenSourceSettings) => self.source_message(message),
             Message::TvAddressChanged(value) => {
                 self.tv_address = value;
                 self.observed = None;
@@ -685,6 +696,16 @@ impl App {
                 wake_active: self.wake_active,
                 wake_conflict: self.workflows.conflict,
                 service_available: self.view_model.control_state().service_available,
+                sources: self.selected_sources(),
+                source_labels: self.source_editor_state().0,
+                pending_show: self.source_editor_state().1,
+                sources_editable: self.view_model.control_state().service_available
+                    && !self.source_save_pending()
+                    && self.snapshot.as_ref().is_some_and(|s| {
+                        s.startup == StartupState::Ready
+                            && !s.storage_pending
+                            && !s.admission_closed
+                    }),
             })
         } else {
             let configured = devices.iter().any(|d| {
@@ -696,6 +717,7 @@ impl App {
                 configured,
                 self.wake_tick,
                 self.power_recovery(),
+                self.selected_sources(),
             )
         }
     }
@@ -1182,6 +1204,7 @@ mod tests {
                 target
                     .into_iter()
                     .map(|id| SavedDevice {
+                        sources: Default::default(),
                         id,
                         label: "Fixture TV".into(),
                         host: TvHost::parse("fixture.local").unwrap(),

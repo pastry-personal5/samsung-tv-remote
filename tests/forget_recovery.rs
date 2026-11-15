@@ -57,6 +57,7 @@ fn initialize(path: &Path, secrets: &FakeSecrets) {
     for id in [DeviceId::new(1), DeviceId::new(2)] {
         let host = TvHost::parse("fixture.local").unwrap();
         repo.save(&SavedDevice {
+            sources: Default::default(),
             id,
             host: host.clone(),
             label: "Fixture TV".into(),

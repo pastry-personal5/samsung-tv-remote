@@ -168,7 +168,11 @@ impl App {
                 if receipt.terminal {
                     let intent = self.intents.remove(&tag).expect("known local context");
                     let follow = self.client_terminal(&intent.command, intent.context, &receipt);
-                    let (severity, text) = workflows::outcome_message(&receipt);
+                    let (severity, mut text) = workflows::outcome_message(&receipt);
+                    if let Some(source) = super::sources::source_outcome(&intent.command, &receipt)
+                    {
+                        text = source;
+                    }
                     if !self.workflows.conflict {
                         self.settings_status = text.clone();
                     }

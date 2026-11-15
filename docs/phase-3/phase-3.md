@@ -90,7 +90,7 @@ providers; see the
 | ID | Milestone | Deliverable | Status | Record |
 | --- | --- | --- | --- | --- |
 | P3-M1 | Capability model and protocol evidence | Target-TV frame evidence; server-owned per-TV capability model with evidence source, staleness, and invalidation; API and MCP read access. | Active | [Overview](milestone-01-overview.md) · [Architecture](milestone-01-architecture.md) |
-| P3-M2 | Sources | User-configured, labelled direct-input keys and the Sources menu fallback, reported as requests only. | Planned | [Overview](milestone-02-overview.md) · [Architecture](milestone-02-architecture.md) |
+| P3-M2 | Sources | User-configured, labelled direct-input keys and the Sources menu fallback, reported as requests only. | Active | [Overview](milestone-02-overview.md) · [Architecture](milestone-02-architecture.md) · [Implementation](milestone-02-implementation.md) |
 | P3-M3 | Apps | Per-TV installed-app catalog with bounded refresh and launch by a returned ID only. | Planned | — |
 | P3-M4 | Text Input | Server-owned IME session that sends UTF-8 text to a focused native Tizen field without retaining it. | Planned | — |
 | P3-M5 | Integrated resilience and accessibility | Cross-feature fakes, two-client and restart behavior, budget re-measurement, native review, and the target-TV matrix. | Planned | — |

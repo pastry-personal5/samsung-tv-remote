@@ -235,6 +235,7 @@ fn state(
     let mut state = super::tests::projection(target, generation, revision);
     let id = target.unwrap_or(DeviceId::new(1));
     state.devices = Arc::new(vec![crate::application::device_repository::SavedDevice {
+        sources: Default::default(),
         id,
         label: "Fixture TV".into(),
         host: TvHost::parse("fixture.local").unwrap(),
@@ -1615,4 +1616,59 @@ async fn mcp_relocation_repair_requires_its_own_explicit_confirmation() {
         crate::control_client::mcp::Intent::Connect { .. }
     ));
     assert!(!app.mcp_repair_confirmation);
+}
+
+#[tokio::test]
+async fn source_editor_submits_one_explicit_replacement_at_the_observed_revision() {
+    use crate::application::sources::{SourceChoice, SourceLabel};
+    use crate::presentation::iced::ui_message::SourceEdit;
+    use crate::RemoteAction;
+    let (mut app, client) = app();
+    let target = DeviceId::new(1);
+    snapshot(
+        &mut app,
+        state(None, 0, 10, 0, WakeConfiguration::default()),
+    )
+    .await;
+    snapshot(
+        &mut app,
+        state(Some(target), 1, 11, 4, WakeConfiguration::default()),
+    )
+    .await;
+    let before = client.requests.lock().unwrap().len();
+    // Show needs a confirmation; the draft label is trimmed by validation.
+    for message in [
+        Message::SourceLabelChanged(RemoteAction::Hdmi2, "  PS5 ".into()),
+        Message::EditSource(RemoteAction::Hdmi2, SourceEdit::Show),
+    ] {
+        let task = app.update(message);
+        run(&mut app, task).await;
+    }
+    assert_eq!(client.requests.lock().unwrap().len(), before);
+    let expected = Command::SetSources {
+        target,
+        generation: 1,
+        revision: 4,
+        choices: [
+            SourceChoice::Unconfigured,
+            SourceChoice::Shown(SourceLabel::parse("PS5")),
+            SourceChoice::Unconfigured,
+            SourceChoice::Unconfigured,
+        ],
+    };
+    queue(&client, native(&expected, 2, None, None, 0, None));
+    let task = app.update(Message::ConfirmShowSource);
+    run(&mut app, task).await;
+    assert_eq!(client.requests.lock().unwrap().len(), before + 1);
+    assert_eq!(client.requests.lock().unwrap()[before].1.command, expected);
+    // While that save is unresolved, further edits are refused, not queued.
+    for message in [
+        Message::EditSource(RemoteAction::Hdmi1, SourceEdit::Hide),
+        Message::SourceLabelChanged(RemoteAction::Hdmi3, "a\u{202E}b".into()),
+        Message::SaveSourceLabel(RemoteAction::Hdmi3),
+    ] {
+        let task = app.update(message);
+        run(&mut app, task).await;
+    }
+    assert_eq!(client.requests.lock().unwrap().len(), before + 1);
 }

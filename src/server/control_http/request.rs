@@ -96,6 +96,12 @@ dto!(Wake {
     wifi_mac: Option<String>,
     active_interface: Option<Interface>,
 });
+dto!(SetSources {
+    device_id: String,
+    selection_generation: Counter,
+    expected_config_revision: Counter,
+    sources: wire::Sources,
+});
 dto!(Forget {
     device_id: String,
     expected_config_revision: Counter,
@@ -146,6 +152,7 @@ pub enum MutationRoute<'a> {
     Select,
     Connect,
     SetWake(&'a str),
+    SetSources(&'a str),
     Remote,
     Wake,
     CancelWake(&'a str),
@@ -271,6 +278,21 @@ pub fn parse_mutation(
                     generation: v.selection_generation.0,
                     revision: v.expected_config_revision.0,
                     configuration,
+                },
+            )
+        }
+        MutationRoute::SetSources(path) => {
+            let (e, k, v) = decode::<SetSources>(body)?.request(current)?;
+            let target = matching_device(path, &v.device_id)?;
+            (
+                e,
+                k,
+                Command::SetSources {
+                    target,
+                    generation: v.selection_generation.0,
+                    revision: v.expected_config_revision.0,
+                    // Server-side label validation; clients only pre-check.
+                    choices: v.sources.choices().ok_or(RequestError::InvalidRequest)?,
                 },
             )
         }

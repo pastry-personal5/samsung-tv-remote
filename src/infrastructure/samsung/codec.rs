@@ -35,6 +35,11 @@ pub fn encode_click(action: RemoteAction) -> Result<String, CodecError> {
         RemoteAction::Mute => "KEY_MUTE",
         RemoteAction::VolumeUp => "KEY_VOLUP",
         RemoteAction::VolumeDown => "KEY_VOLDOWN",
+        RemoteAction::Hdmi1 => "KEY_HDMI1",
+        RemoteAction::Hdmi2 => "KEY_HDMI2",
+        RemoteAction::Hdmi3 => "KEY_HDMI3",
+        RemoteAction::Tuner => "KEY_TV",
+        RemoteAction::SourceMenu => "KEY_SOURCE",
     };
     Ok(format!(
         "{{\"method\":\"ms.remote.control\",\"params\":{{\"Cmd\":\"Click\",\"DataOfCmd\":\"{key}\",\"Option\":\"false\",\"TypeOfRemote\":\"SendRemoteKey\"}}}}"
@@ -92,7 +97,13 @@ mod tests {
             "KEY_MUTE",
             "KEY_VOLUP",
             "KEY_VOLDOWN",
+            "KEY_HDMI1",
+            "KEY_HDMI2",
+            "KEY_HDMI3",
+            "KEY_TV",
+            "KEY_SOURCE",
         ];
+        assert_eq!(expected.len(), RemoteAction::ENCODED_ACTIONS.len());
         for (action, key) in RemoteAction::ENCODED_ACTIONS.into_iter().zip(expected) {
             let frame = encode_click(action).unwrap();
             let json: Value = serde_json::from_str(&frame).unwrap();

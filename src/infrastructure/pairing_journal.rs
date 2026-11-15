@@ -24,6 +24,7 @@ struct DiskBackup {
     device: DiskDevice,
     trust: Option<DiskTrustRecord>,
 }
+const BACKUP_VERSION: u32 = 2;
 fn id(value: &str) -> Result<DeviceId, RepositoryError> {
     DeviceId::parse_record_key(value).ok_or(RepositoryError::Corrupt)
 }
@@ -180,24 +181,11 @@ impl LocalRecoveryJournal {
         let device = &backup.device;
         self.backup_file(backup.transaction)?
             .write(&DiskBackup {
-                version: 1,
+                // v2 carries `sources`. The nested record ignores unknown
+                // fields, so only this version stops an older reader dropping them.
+                version: BACKUP_VERSION,
                 transaction: backup.transaction.to_string(),
-                device: DiskDevice {
-                    id: device.id.to_string(),
-                    label: device.label.clone(),
-                    host: device.host.as_str().into(),
-                    wake: Some(
-                        serde_json::to_value(DiskWake {
-                            wired: device.wake.wired.map(|mac| mac.to_string()),
-                            wifi: device.wake.wifi.map(|mac| mac.to_string()),
-                            active: device.wake.active.map(|a| match a {
-                                WakeInterface::Wired => "wired".into(),
-                                WakeInterface::WiFi => "wifi".into(),
-                            }),
-                        })
-                        .map_err(|_| RepositoryError::Corrupt)?,
-                    ),
-                },
+                device: disk_device(device)?,
                 trust: backup.trust.as_ref().map(|t| DiskTrustRecord {
                     host: t.host.as_str().into(),
                     certificate_sha256: t.pin.to_hex(),
@@ -214,7 +202,9 @@ impl LocalRecoveryJournal {
             .read()
             .map_err(recovery_io_error)?
             .ok_or(RepositoryError::Corrupt)?;
-        if backup.version != 1 || id(&backup.transaction)? != transaction {
+        if !(1..=BACKUP_VERSION).contains(&backup.version)
+            || id(&backup.transaction)? != transaction
+        {
             return Err(RepositoryError::Corrupt);
         }
         Ok(PairingBackup {

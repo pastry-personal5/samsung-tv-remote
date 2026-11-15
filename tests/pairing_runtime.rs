@@ -126,6 +126,7 @@ fn host() -> TvHost {
 }
 fn saved(id: DeviceId) -> SavedDevice {
     SavedDevice {
+        sources: Default::default(),
         id,
         label: "Prior TV".into(),
         host: host(),
@@ -533,6 +534,7 @@ impl RecoveryJournal for CrashJournal {
 fn approved(target: DeviceId, repair: bool) -> ApprovedPairing {
     ApprovedPairing {
         device: SavedDevice {
+            sources: Default::default(),
             label: "New approval".into(),
             ..saved(target)
         },

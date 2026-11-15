@@ -69,6 +69,7 @@ field is accepted. Route-specific fields are:
 | wakes | `device_id`, `selection_generation` |
 | remote-actions | `device_id`, `selection_generation`, semantic `action` |
 | devices/{id}/wake | Matching `device_id`, `selection_generation`, `expected_config_revision`, optional `wired_mac`, `wifi_mac`, `active_interface` (`Wired` or `WiFi`) |
+| devices/{id}/sources (P3-M2) | Matching `device_id`, `selection_generation`, `expected_config_revision`, `sources` with exactly `hdmi1`, `hdmi2`, `hdmi3`, `tuner`, each `{"state": "unconfigured" \| "hidden" \| "shown", "label"?}`; a label only on `shown` |
 | wakes/{id}/cancel | `device_id`, `selection_generation`; path is the named operation |
 | devices/{id}/forget | Matching `device_id`, `expected_config_revision`, equal `confirm_device_id` |
 | devices/{id}/recover-pairing or recover-forget | Matching `device_id`, exact `transaction_id`, equal `confirm_device_id` |

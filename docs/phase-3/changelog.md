@@ -2,6 +2,24 @@
 
 Status: Active
 
+- 2026-11-15 — Owner accepted the P3-M2 gate decisions: configurable tuner,
+  GUI-only source editing, and an MCP catalog re-baseline at 58,820 bytes
+  (+83). Hardware matrix still not run.
+
+- 2026-11-15 — Owner requested P3-M2 implementation; recorded an offline-code
+  exception like M1's. Implemented the five source actions, per-TV source
+  configuration with durable `user_confirmation` facts, `SetSources` on the
+  shared Wake revision, `source_unconfigured`/`source_hidden` 412 admission
+  rejections, device format v3 with `devices.pre-v3.json`, pairing backup v2,
+  `PUT /v1/devices/{id}/sources`, MCP `remote_action` names and `inspect_tv`
+  sources, and the GUI Sources view and Settings editor; see the
+  [implementation record](milestone-02-implementation.md). Defaults taken,
+  owner-reviewable: configurable tuner; GUI-only editing. Measured: 1,024-TV
+  M2 worst-case snapshot 3,761,227 of 4,194,304 bytes (below M1's 4,071,889
+  because source facts drop their session context); v3 device file 2,531,036
+  of 4,194,304 bytes; MCP catalog proxy 58,737 → 58,820 bytes (+83, ~21 units),
+  not yet offset or re-baselined. Hardware matrix not run.
+
 - 2026-11-15 — Second P3-M2 plan review; see the
   [plan review](milestone-02-plan-review.md#second-review--2026-11-15).
   Hidden/unconfigured source keys are now 412 admission rejections, not

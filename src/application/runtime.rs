@@ -173,13 +173,27 @@ struct RestoredProfile {
 }
 type Restored = Result<RestoredProfile, RepositoryError>;
 
+/// Only Select fences the session; configuration edits never disconnect.
+enum StorageWrite {
+    Select,
+    Wake(super::wake::WakeConfiguration),
+    Sources(super::sources::SourceConfiguration),
+}
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum StorageKind {
+    Select,
+    Wake,
+    Sources,
+}
+
 enum Completion {
     Failed(OperationId),
     Restore(Restored),
     Storage(
         OperationId,
         Result<SavedDevice, RepositoryError>,
-        bool,
+        DeviceId,
+        StorageKind,
         Restored,
     ),
     Forget(
@@ -617,6 +631,9 @@ impl Owner {
             Command::SetWake {
                 target, generation, ..
             }
+            | Command::SetSources {
+                target, generation, ..
+            }
             | Command::Connect {
                 target, generation, ..
             }
@@ -745,7 +762,7 @@ impl Owner {
                     self.finish(id, Outcome::Rejected(Rejection::Blocked));
                 }
             }
-            Command::Select { target, .. } => self.storage_write(id, target, None),
+            Command::Select { target, .. } => self.storage_write(id, target, StorageWrite::Select),
             Command::SetWake {
                 target,
                 revision,
@@ -762,10 +779,57 @@ impl Owner {
                 } else if configuration.active.is_some() && configuration.active_mac().is_none() {
                     self.finish(id, Outcome::Rejected(Rejection::InvalidConfiguration));
                 } else {
-                    self.storage_write(id, target, Some(configuration));
+                    self.storage_write(id, target, StorageWrite::Wake(configuration));
+                }
+            }
+            Command::SetSources {
+                target,
+                revision,
+                choices,
+                ..
+            } => {
+                let current = self
+                    .coordinator
+                    .saved_devices
+                    .iter()
+                    .find(|device| device.id == target)
+                    .map(|device| device.sources.clone());
+                if !self
+                    .snapshot
+                    .configuration_revisions
+                    .iter()
+                    .any(|(device, current)| *device == target && *current == revision)
+                {
+                    self.finish(id, Outcome::Rejected(Rejection::StaleConfiguration));
+                } else if let Some(current) = current {
+                    let sources = current.apply(choices, super::sources::now_unix_ms());
+                    self.storage_write(id, target, StorageWrite::Sources(sources));
+                } else {
+                    self.finish(id, Outcome::Rejected(Rejection::MissingDevice));
                 }
             }
             Command::Remote(request) => {
+                // After the selection fence, before every dispatcher guard: a
+                // hidden key on a disconnected TV still reports source_hidden.
+                // Configuration is read once at admission; later edits do not
+                // recall a queued key.
+                let setting = self
+                    .coordinator
+                    .saved_devices
+                    .iter()
+                    .find(|device| device.id == request.target())
+                    .and_then(|device| device.sources.setting(request.action()));
+                match setting {
+                    Some(super::sources::SourceSetting::Unconfigured) => {
+                        self.finish(id, Outcome::Rejected(Rejection::SourceUnconfigured));
+                        return;
+                    }
+                    Some(super::sources::SourceSetting::Hidden) => {
+                        self.finish(id, Outcome::Rejected(Rejection::SourceHidden));
+                        return;
+                    }
+                    _ => {}
+                }
                 if request.action() == crate::domain::RemoteAction::PowerToggle
                     && self.coordinator.app_state.connection_state()
                         != super::ConnectionState::Ready
@@ -915,12 +979,7 @@ impl Owner {
         });
     }
 
-    fn storage_write(
-        &mut self,
-        id: OperationId,
-        target: DeviceId,
-        configuration: Option<super::wake::WakeConfiguration>,
-    ) {
+    fn storage_write(&mut self, id: OperationId, target: DeviceId, write: StorageWrite) {
         if self.workers.len() >= self.limits.effects {
             self.finish(id, Outcome::Rejected(Rejection::Busy));
             return;
@@ -940,7 +999,7 @@ impl Owner {
         };
         self.storage = Some((id, Instant::now() + self.limits.storage_deadline));
         // Selection fences all session writes before its durable commit starts.
-        if configuration.is_none() {
+        if matches!(write, StorageWrite::Select) {
             self.cancel_wakes();
             self.coordinator.stop_active();
             let generation = self.coordinator.app_state.selection_generation();
@@ -950,11 +1009,19 @@ impl Owner {
             self.coordinator.app_state.reset_playback_state(generation);
             self.collect_remote_results();
         }
+        let kind = match &write {
+            StorageWrite::Select => StorageKind::Select,
+            StorageWrite::Wake(_) => StorageKind::Wake,
+            StorageWrite::Sources(_) => StorageKind::Sources,
+        };
         self.spawn(id, async move {
             let (result, profile) = tokio::task::spawn_blocking(move || {
-                let result = match configuration {
-                    Some(configuration) => setup.save_wake_configuration(target, configuration),
-                    None => setup.select_saved(target),
+                let result = match write {
+                    StorageWrite::Wake(configuration) => {
+                        setup.save_wake_configuration(target, configuration)
+                    }
+                    StorageWrite::Sources(sources) => setup.save_sources(target, sources),
+                    StorageWrite::Select => setup.select_saved(target),
                 };
                 (result, read_profile(Some(setup)))
             })
@@ -963,7 +1030,7 @@ impl Owner {
                 Err(RepositoryError::Unavailable),
                 Err(RepositoryError::Unavailable),
             ));
-            Completion::Storage(id, result, configuration.is_none(), profile)
+            Completion::Storage(id, result, target, kind, profile)
         });
         self.publish(Some(id));
     }
@@ -1091,26 +1158,33 @@ impl Owner {
                 );
                 self.publish(None);
             }
-            Completion::Storage(id, result, selection, profile) => {
+            Completion::Storage(id, result, target, kind, profile) => {
                 let generation = self.coordinator.app_state.selection_generation();
-                if result.is_err() {
+                let selection = kind == StorageKind::Select;
+                if result.is_err() && !selection {
                     // A failed fsync/rename acknowledgment can still have changed
-                    // the file. Reconcile durable facts before releasing the lane.
-                    if !selection {
-                        if let Ok(profile) = &profile {
-                            if let Some(device) = profile.devices.iter().find(|d| {
-                                self.coordinator
-                                    .saved_devices
-                                    .iter()
-                                    .any(|old| old.id == d.id && old.wake != d.wake)
-                            }) {
-                                if let Some((_, revision)) =
-                                    Arc::make_mut(&mut self.snapshot.configuration_revisions)
-                                        .iter_mut()
-                                        .find(|(id, _)| *id == device.id)
-                                {
-                                    *revision += 1;
-                                }
+                    // the file. Reconcile the target's durable facts before
+                    // releasing the lane; an unreadable reread blocks startup
+                    // through reconcile_setup rather than publishing a guess.
+                    if let Ok(profile) = &profile {
+                        let old = self
+                            .coordinator
+                            .saved_devices
+                            .iter()
+                            .find(|d| d.id == target);
+                        let new = profile.devices.iter().find(|d| d.id == target);
+                        let committed = old.zip(new).is_some_and(|(old, new)| match kind {
+                            StorageKind::Wake => old.wake != new.wake,
+                            StorageKind::Sources => old.sources != new.sources,
+                            StorageKind::Select => false,
+                        });
+                        if committed {
+                            if let Some((_, revision)) =
+                                Arc::make_mut(&mut self.snapshot.configuration_revisions)
+                                    .iter_mut()
+                                    .find(|(id, _)| *id == target)
+                            {
+                                *revision += 1;
                             }
                         }
                     }
@@ -1143,7 +1217,7 @@ impl Owner {
                 self.finish(
                     id,
                     result
-                        .map(Outcome::Saved)
+                        .map(|device| Outcome::Saved(Box::new(device)))
                         .unwrap_or_else(Outcome::StorageFailed),
                 );
                 self.publish(None);
@@ -1300,13 +1374,17 @@ impl Owner {
                     });
         }
         self.snapshot.storage_pending = self.storage.is_some() || self.restoring;
+        let now = super::sources::now_unix_ms();
         let capabilities = self
             .snapshot
             .devices
             .iter()
             .map(|d| {
-                self.capabilities
-                    .summary(d.id, self.capability_reason(d.id))
+                let mut summary = self
+                    .capabilities
+                    .summary(d.id, self.capability_reason(d.id));
+                super::capabilities::overlay_sources(&mut summary, &d.sources, now);
+                summary
             })
             .collect::<Vec<_>>();
         if *self.snapshot.capabilities != capabilities {

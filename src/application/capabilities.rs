@@ -41,6 +41,9 @@ impl CapabilityFact {
         if self.support == Support::Unknown {
             return self == &Self::unknown(self.key);
         }
+        if self.context.is_none() {
+            return self.durable();
+        }
         self.observed_at_unix_ms.is_some_and(|t| t > 0)
             && self.context.is_some_and(|c| c.session > 0)
             && self.freshness != Freshness::Unobserved
@@ -54,6 +57,61 @@ impl CapabilityFact {
                 }
                 _ => self.source == EvidenceSource::UserConfirmation,
             }
+    }
+
+    /// A user-configured source preference: evidence without a session.
+    pub fn durable(&self) -> bool {
+        matches!(
+            self.key,
+            CapabilityKey::Hdmi1
+                | CapabilityKey::Hdmi2
+                | CapabilityKey::Hdmi3
+                | CapabilityKey::Tuner
+        ) && self.support == Support::Supported
+            && self.source == EvidenceSource::UserConfirmation
+            && self.observed_at_unix_ms.is_some_and(|t| t > 0)
+            && self.context.is_none()
+            && self.freshness != Freshness::Unobserved
+    }
+}
+
+/// Replace all four source-port facts from durable configuration. Session
+/// observations of these keys never revive a hidden or unconfigured port.
+pub fn overlay_sources(
+    summary: &mut CapabilitySummary,
+    sources: &super::sources::SourceConfiguration,
+    now_unix_ms: u64,
+) {
+    use super::sources::SourceSetting;
+    for (action, setting) in crate::domain::RemoteAction::SOURCE_PORTS
+        .iter()
+        .zip(sources.ports.iter())
+    {
+        let key = action.source_capability().expect("source port");
+        let fact = summary
+            .facts
+            .iter_mut()
+            .find(|f| f.key == key)
+            .expect("finite capability set");
+        *fact = match setting {
+            SourceSetting::Shown {
+                confirmed_at_unix_ms,
+                ..
+            } => CapabilityFact {
+                key,
+                support: Support::Supported,
+                source: EvidenceSource::UserConfirmation,
+                observed_at_unix_ms: Some(*confirmed_at_unix_ms),
+                context: None,
+                // M1 clock rule: a future observation is never current.
+                freshness: if *confirmed_at_unix_ms > now_unix_ms {
+                    Freshness::Stale
+                } else {
+                    Freshness::Current
+                },
+            },
+            _ => CapabilityFact::unknown(key),
+        };
     }
 }
 
@@ -472,5 +530,115 @@ mod tests {
                 .reason_for(CapabilityKey::AppLaunch),
             CapabilityReason::FeatureUnsupported
         );
+    }
+    #[test]
+    fn durable_source_facts_are_context_free_and_override_session_history() {
+        use crate::application::sources::*;
+        let durable = |key, support, source, at: Option<u64>| CapabilityFact {
+            key,
+            support,
+            source,
+            observed_at_unix_ms: at,
+            context: None,
+            freshness: Freshness::Current,
+        };
+        assert!(durable(
+            CapabilityKey::Hdmi2,
+            Support::Supported,
+            EvidenceSource::UserConfirmation,
+            Some(5)
+        )
+        .valid());
+        for bad in [
+            durable(
+                CapabilityKey::Sources,
+                Support::Supported,
+                EvidenceSource::UserConfirmation,
+                Some(5),
+            ),
+            durable(
+                CapabilityKey::InstalledApps,
+                Support::Supported,
+                EvidenceSource::TvResponse,
+                Some(5),
+            ),
+            durable(
+                CapabilityKey::NativeIme,
+                Support::Supported,
+                EvidenceSource::TvEvent,
+                Some(5),
+            ),
+            durable(
+                CapabilityKey::Hdmi1,
+                Support::Unsupported,
+                EvidenceSource::UserConfirmation,
+                Some(5),
+            ),
+            durable(
+                CapabilityKey::Hdmi1,
+                Support::Supported,
+                EvidenceSource::TvResponse,
+                Some(5),
+            ),
+            durable(
+                CapabilityKey::Hdmi1,
+                Support::Supported,
+                EvidenceSource::UserConfirmation,
+                None,
+            ),
+            durable(
+                CapabilityKey::Hdmi1,
+                Support::Supported,
+                EvidenceSource::UserConfirmation,
+                Some(0),
+            ),
+        ] {
+            assert!(!bad.valid(), "{bad:?}");
+        }
+        // A session observation of HDMI 1 cannot revive a hidden port.
+        let mut store = CapabilityStore::default();
+        store.session(Some((DeviceId::new(1), context(1, 1))));
+        assert!(observe(
+            &mut store,
+            CapabilityKey::Hdmi1,
+            EvidenceSource::UserConfirmation,
+            10,
+            Instant::now()
+        ));
+        let config = SourceConfiguration::default().apply(
+            [
+                SourceChoice::Hidden,
+                SourceChoice::Shown(None),
+                SourceChoice::Shown(None),
+                SourceChoice::Unconfigured,
+            ],
+            100,
+        );
+        let mut config = config;
+        config.ports[2] = SourceSetting::Shown {
+            label: None,
+            confirmed_at_unix_ms: 500,
+        };
+        let mut summary = store.summary(DeviceId::new(1), CapabilityReason::Disconnected);
+        overlay_sources(&mut summary, &config, 200);
+        assert_eq!(
+            summary.fact(CapabilityKey::Hdmi1),
+            &CapabilityFact::unknown(CapabilityKey::Hdmi1)
+        );
+        let hdmi2 = summary.fact(CapabilityKey::Hdmi2);
+        assert_eq!(
+            (hdmi2.freshness, hdmi2.observed_at_unix_ms, hdmi2.context),
+            (Freshness::Current, Some(100), None)
+        );
+        assert_eq!(
+            summary.fact(CapabilityKey::Hdmi3).freshness,
+            Freshness::Stale,
+            "future time"
+        );
+        assert_eq!(
+            summary.fact(CapabilityKey::Tuner),
+            &CapabilityFact::unknown(CapabilityKey::Tuner)
+        );
+        assert!(summary.facts.iter().all(CapabilityFact::valid));
     }
 }

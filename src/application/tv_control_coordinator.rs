@@ -401,6 +401,7 @@ mod tests {
 
     fn saved_device(id: DeviceId) -> SavedDevice {
         SavedDevice {
+            sources: Default::default(),
             id,
             label: "TV".to_owned(),
             host: TvHost::parse("tv.local").unwrap(),

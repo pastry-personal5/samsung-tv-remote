@@ -16,6 +16,7 @@ fn snapshot() -> Snapshot {
         startup: StartupState::Ready,
         control: ControlState::none(),
         devices: Arc::new(vec![SavedDevice {
+            sources: Default::default(),
             id: DeviceId::new(1),
             label: "Synthetic TV".into(),
             host: TvHost::parse("synthetic.invalid").unwrap(),
@@ -90,8 +91,20 @@ fn maximal_history_is_lossless_and_fits_snapshot_and_sse_limits() {
         "c".repeat(63),
         "d".repeat(61)
     );
+    // M2 worst case: every TV shows every port with a 64-byte label; only
+    // the selected entry projects its labels.
+    let label = samsung_tv_remote::application::sources::SourceLabel::parse(&"😀".repeat(16));
+    let sources = samsung_tv_remote::application::sources::SourceConfiguration {
+        ports: Box::new(std::array::from_fn(|_| {
+            samsung_tv_remote::application::sources::SourceSetting::Shown {
+                label: label.clone(),
+                confirmed_at_unix_ms: u64::MAX,
+            }
+        })),
+    };
     let devices: Vec<_> = (1..=1024)
         .map(|id| SavedDevice {
+            sources: sources.clone(),
             id: DeviceId::new(id),
             label: "\u{0001}".repeat(256),
             host: TvHost::parse(&host).unwrap(),
@@ -116,7 +129,15 @@ fn maximal_history_is_lossless_and_fits_snapshot_and_sse_limits() {
                     _ => EvidenceSource::UserConfirmation,
                 },
                 observed_at_unix_ms: Some(u64::MAX),
-                context: Some(EvidenceContext {
+                // Durable source facts carry no session context.
+                context: (!matches!(
+                    key,
+                    CapabilityKey::Hdmi1
+                        | CapabilityKey::Hdmi2
+                        | CapabilityKey::Hdmi3
+                        | CapabilityKey::Tuner
+                ))
+                .then_some(EvidenceContext {
                     epoch: Epoch::from_u128(u128::MAX),
                     selection_generation: u64::MAX,
                     session: u64::MAX,
@@ -126,9 +147,12 @@ fn maximal_history_is_lossless_and_fits_snapshot_and_sse_limits() {
         })
         .collect();
     s.configuration_revisions = Arc::new(devices.iter().map(|d| (d.id, u64::MAX)).collect());
+    s.control.select_device(devices[0].display());
     s.devices = Arc::new(devices);
     s.capabilities = Arc::new(summaries);
     let value = response::snapshot(&s);
+    assert!(value["devices"][0].get("sources").is_some());
+    assert!(value["devices"][1].get("sources").is_none());
     let bytes = serde_json::to_vec(&value).unwrap();
     println!(
         "maximal capability snapshot={} bytes; limit={}",
@@ -211,4 +235,63 @@ fn current_evidence_requires_matching_epoch_selection_session_and_ready_owner() 
         v[field] = bad;
         assert!(projection::snapshot(&v).is_err());
     }
+}
+
+#[test]
+fn durable_source_facts_decode_disconnected_and_sources_blocks_are_strict() {
+    use samsung_tv_remote::application::sources::*;
+    let mut s = snapshot();
+    s.control.select_device(s.devices[0].display());
+    let mut device = s.devices[0].clone();
+    device.sources = SourceConfiguration::default().apply(
+        [
+            SourceChoice::Shown(SourceLabel::parse("PS5")),
+            SourceChoice::Hidden,
+            SourceChoice::Unconfigured,
+            SourceChoice::Shown(None),
+        ],
+        10,
+    );
+    let mut summary = CapabilitySummary::unknown(DeviceId::new(1), CapabilityReason::Disconnected);
+    overlay_sources(&mut summary, &device.sources, 20);
+    s.devices = Arc::new(vec![device.clone()]);
+    s.capabilities = Arc::new(vec![summary]);
+    let value = response::snapshot(&s);
+    let decoded = projection::snapshot(&value).unwrap();
+    assert_eq!(decoded.devices[0].sources, device.sources);
+    assert_eq!(decoded.capabilities, s.capabilities);
+    // Durable facts stay current even while admission is closed.
+    let mut closed = value.clone();
+    closed["admission_closed"] = json!(true);
+    assert!(projection::snapshot(&closed).is_ok());
+    // An absent block is the old-response fallback; a present bad one fails.
+    let mut old = value.clone();
+    old["devices"][0].as_object_mut().unwrap().remove("sources");
+    assert_eq!(
+        projection::snapshot(&old).unwrap().devices[0].sources,
+        SourceConfiguration::default()
+    );
+    for bad in [
+        json!(null),
+        json!({}),
+        json!({"state":"shown","label":"PS5","confirmed_at_unix_ms":null}),
+        json!({"state":"shown","label":" PS5","confirmed_at_unix_ms":"10"}),
+        json!({"state":"hidden","label":null,"confirmed_at_unix_ms":"10"}),
+    ] {
+        let mut v = value.clone();
+        if bad.is_object() && !bad.as_object().unwrap().is_empty() {
+            v["devices"][0]["sources"]["hdmi1"] = bad;
+        } else {
+            v["devices"][0]["sources"] = bad;
+        }
+        assert!(projection::snapshot(&v).is_err(), "{v}");
+    }
+    // A durable Sources-menu fact, or one with a session-free app key, fails closed.
+    let mut v = value;
+    let facts = v["devices"][0]["capabilities"]["facts"]
+        .as_array_mut()
+        .unwrap();
+    facts[7] = facts[3].clone();
+    facts[7]["key"] = json!("sources");
+    assert!(projection::snapshot(&v).is_err());
 }

@@ -97,6 +97,7 @@ async fn production_saturation_memory_and_stage_timings() {
     let profile = Arc::new(common::MemorySetup::default());
     *profile.devices.lock().unwrap() = (0..1024)
         .map(|id| SavedDevice {
+            sources: Default::default(),
             id: DeviceId::new(id),
             label: "l".repeat(256),
             host: host(),

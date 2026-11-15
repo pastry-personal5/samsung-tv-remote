@@ -189,6 +189,8 @@ pub(super) fn failure_message(code: crate::control_client::model::FailureCode) -
         InvalidConfiguration|InvalidLabel=>"TV settings are invalid. Review the label and Wake configuration.",
         InvalidConfirmation|ObservationExpired=>"The TV check expired or changed. Check the TV again before Pairing.",
         WakeNotConfigured=>"Configure an active Wake MAC address in Settings.",
+        SourceUnconfigured=>"Not sent. Show this source key in Settings → Sources first.",
+        SourceHidden=>"Not sent. This source key is hidden in Settings → Sources.",
         PartialSetup=>"TV setup or cleanup is incomplete. Review Settings before explicit recovery.",
         Cancelled=>"The TV workflow was cancelled. No follow-up will be started.",
         NetworkPermissionDenied=>"Local Network access is denied. Allow access in macOS settings, then check the TV explicitly.",

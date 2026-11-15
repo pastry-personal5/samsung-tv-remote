@@ -656,6 +656,12 @@ fn mutation_route<'a>(method: &Method, path: &'a str) -> Option<MutationRoute<'a
         {
             return Some(MutationRoute::SetWake(id));
         }
+        if let Some(id) = path
+            .strip_prefix("/v1/devices/")
+            .and_then(|v| v.strip_suffix("/sources"))
+        {
+            return Some(MutationRoute::SetSources(id));
+        }
     }
     None
 }

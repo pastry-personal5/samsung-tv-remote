@@ -397,6 +397,7 @@ async fn bounded_pages_are_complete_private_and_ignore_connection_only_revisions
             repository
                 .save(
                     &samsung_tv_remote::application::device_repository::SavedDevice {
+                        sources: Default::default(),
                         id: DeviceId::new(n),
                         label: format!("Synthetic {n}"),
                         host: TvHost::parse(&format!("synthetic-{n}.invalid")).unwrap(),
@@ -602,6 +603,7 @@ async fn inspection_bounds_unicode_labels_without_changing_saved_configuration()
         LocalDeviceRepository::new(path)
             .save(
                 &samsung_tv_remote::application::device_repository::SavedDevice {
+                    sources: Default::default(),
                     id: DeviceId::new(1),
                     label: label.clone(),
                     host: TvHost::parse("synthetic.invalid").unwrap(),

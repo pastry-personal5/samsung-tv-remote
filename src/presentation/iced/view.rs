@@ -333,13 +333,14 @@ pub struct PowerRecovery {
     pub checked: bool,
 }
 
-pub fn main_window(
-    view_model: &ViewModel,
+pub fn main_window<'a>(
+    view_model: &'a ViewModel,
     wake_stage: WakeStage,
     wake_configured: bool,
     wake_tick: bool,
     recovery: PowerRecovery,
-) -> Element<'_, Message> {
+    sources: Option<&crate::application::sources::SourceConfiguration>,
+) -> Element<'a, Message> {
     let sidebar = container(
         column![
             navigation_button(PrimaryView::Power, view_model.primary_view()),
@@ -376,11 +377,14 @@ pub fn main_window(
         wake_configured,
         wake_tick,
         recovery,
+        sources,
     );
 
-    // Check if overlay is needed for Remote View when actions are disabled
-    let scrollable_area: Element<'_, Message> = if view_model.primary_view() == PrimaryView::Remote
-        && !control_state.remote_actions_enabled()
+    // Remote and Sources share one disabled explanation.
+    let scrollable_area: Element<'_, Message> = if matches!(
+        view_model.primary_view(),
+        PrimaryView::Remote | PrimaryView::Sources
+    ) && !control_state.remote_actions_enabled()
     {
         create_action_disabled_overlay(control_state, wake_stage, primary_view_element)
     } else {
@@ -433,6 +437,7 @@ fn primary_view(
     wake_configured: bool,
     wake_tick: bool,
     recovery: PowerRecovery,
+    sources: Option<&crate::application::sources::SourceConfiguration>,
 ) -> Element<'static, Message> {
     match primary_view {
         PrimaryView::Power => power_view(
@@ -443,10 +448,7 @@ fn primary_view(
             recovery,
         ),
         PrimaryView::Remote => remote_view(control_state, wake_stage, wake_configured),
-        PrimaryView::Sources => empty_primary_view(
-            "Sources View",
-            "No TV selected. Source choices will appear after choosing a TV in Settings.",
-        ),
+        PrimaryView::Sources => sources_view(sources, control_state.remote_actions_enabled()),
         PrimaryView::Apps => empty_primary_view(
             "Apps View",
             "No TV selected. Installed apps will appear after choosing a TV in Settings.",
@@ -456,6 +458,63 @@ fn primary_view(
             "No TV selected. Text input is unavailable until a TV is selected.",
         ),
     }
+}
+
+/// A user label never replaces the port identity, so equal labels stay distinct.
+pub fn source_display(action: RemoteAction, label: Option<&str>) -> String {
+    let port = crate::application::sources::port_name(action);
+    match label {
+        Some(label) => format!("{label} — {port}"),
+        None => port.to_owned(),
+    }
+}
+
+fn sources_view(
+    sources: Option<&crate::application::sources::SourceConfiguration>,
+    enabled: bool,
+) -> Element<'static, Message> {
+    use crate::application::sources::SourceSetting;
+    let shown: Vec<_> = sources
+        .map(|s| {
+            RemoteAction::SOURCE_PORTS
+                .iter()
+                .zip(s.ports.iter())
+                .filter_map(|(action, setting)| match setting {
+                    SourceSetting::Shown { label, .. } => Some((
+                        *action,
+                        source_display(*action, label.as_ref().map(|l| l.as_str())),
+                    )),
+                    _ => None,
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    let mut content = column![text(
+        "Each press sends one request. The TV reports nothing back, so the active input is never shown."
+    )]
+    .spacing(10);
+    if shown.is_empty() {
+        content = content.push(text(if sources.is_some() {
+            "No source keys are shown for this TV. Choose which ports to offer in Settings → Sources."
+        } else {
+            "No TV selected. Source choices will appear after choosing a TV in Settings."
+        }));
+        content =
+            content.push(button("Open Source Settings").on_press(Message::OpenSourceSettings));
+    }
+    for (action, name) in shown {
+        content = content.push(
+            button(text(format!("Request {name}")))
+                .width(Length::Fill)
+                .on_press_maybe(enabled.then_some(Message::SendSource(action))),
+        );
+    }
+    content = content.push(
+        button(text("Open the TV's Sources menu"))
+            .width(Length::Fill)
+            .on_press_maybe(enabled.then_some(Message::SendSource(RemoteAction::SourceMenu))),
+    );
+    view_box("Sources View", content.into())
 }
 
 fn empty_primary_view(title: &'static str, status: &'static str) -> Element<'static, Message> {
@@ -1076,6 +1135,10 @@ pub struct SettingsView<'a> {
     pub wake_active: Option<WakeInterface>,
     pub wake_conflict: bool,
     pub service_available: bool,
+    pub sources: Option<&'a crate::application::sources::SourceConfiguration>,
+    pub source_labels: [String; 4],
+    pub pending_show: Option<RemoteAction>,
+    pub sources_editable: bool,
 }
 
 fn candidate_hosts(
@@ -1130,6 +1193,10 @@ pub fn settings_window(options: SettingsView<'_>) -> Element<'_, Message> {
         wake_active,
         wake_conflict,
         service_available,
+        sources,
+        source_labels,
+        pending_show,
+        sources_editable,
     } = options;
     let settings_item = |label, page| {
         button(
@@ -1161,6 +1228,7 @@ pub fn settings_window(options: SettingsView<'_>) -> Element<'_, Message> {
             .align_y(Alignment::Center),
             settings_item("Discovery", SettingsPage::Discovery),
             settings_item("Wake on LAN", SettingsPage::WakeOnLan),
+            settings_item("Sources", SettingsPage::Sources),
             settings_item("Servers", SettingsPage::Servers),
         ]
         .spacing(0)
@@ -1444,6 +1512,16 @@ pub fn settings_window(options: SettingsView<'_>) -> Element<'_, Message> {
         ]
         .spacing(14)
         .into(),
+        SettingsPage::Sources => column![
+            text("Sources").size(26),
+            card(
+                "Source Keys",
+                sources_editor(sources, source_labels, pending_show, sources_editable)
+            ),
+            card("Guidance", text(status)),
+        ]
+        .spacing(14)
+        .into(),
         SettingsPage::WakeOnLan => column![
             text("Wake on LAN").size(26),
             card("Wake Configuration", wake_content),
@@ -1460,9 +1538,106 @@ pub fn settings_window(options: SettingsView<'_>) -> Element<'_, Message> {
     row![sidebar, main_pane].height(Length::Fill).into()
 }
 
+fn sources_editor(
+    sources: Option<&crate::application::sources::SourceConfiguration>,
+    labels: [String; 4],
+    pending_show: Option<RemoteAction>,
+    editable: bool,
+) -> Element<'static, Message> {
+    use crate::application::sources::{port_name, SourceSetting};
+    use crate::presentation::iced::ui_message::SourceEdit;
+    let Some(sources) = sources else {
+        return text("Select a saved TV in Discovery to choose its source keys.").into();
+    };
+    let mut content = column![
+        text(
+            "Show only the ports you use. The app cannot detect ports or report the active input."
+        ),
+        text("Hiding stops new requests; it does not recall one already queued."),
+    ]
+    .spacing(12);
+    if !editable {
+        content = content.push(text(
+            "Saving is unavailable while the server is busy, stopping or a source save is pending.",
+        ));
+    }
+    let when = |enabled: bool, message: Message| (editable && enabled).then_some(message);
+    for ((action, setting), label) in RemoteAction::SOURCE_PORTS
+        .into_iter()
+        .zip((*sources.ports).clone())
+        .zip(labels)
+    {
+        let port = port_name(action);
+        let shown = matches!(setting, SourceSetting::Shown { .. });
+        let state = match setting {
+            SourceSetting::Unconfigured => "Not configured",
+            SourceSetting::Hidden => "Hidden",
+            SourceSetting::Shown { .. } => "Shown",
+        };
+        let mut row_content = row![
+            text(format!("{port}: {state}")).width(Length::Fixed(170.0)),
+            button(text(format!("Show {port}")))
+                .on_press_maybe(when(!shown, Message::EditSource(action, SourceEdit::Show))),
+            button(text(format!("Hide {port}"))).on_press_maybe(when(
+                setting != SourceSetting::Hidden,
+                Message::EditSource(action, SourceEdit::Hide)
+            )),
+            button(text(format!("Reset {port}"))).on_press_maybe(when(
+                setting != SourceSetting::Unconfigured,
+                Message::EditSource(action, SourceEdit::Reset)
+            )),
+        ]
+        .spacing(8)
+        .align_y(Alignment::Center);
+        if shown {
+            row_content = row_content
+                .push(
+                    text_input(&format!("{port} label (optional)"), &label)
+                        .on_input_maybe(
+                            editable
+                                .then_some(move |value| Message::SourceLabelChanged(action, value)),
+                        )
+                        .on_submit_maybe(editable.then_some(Message::SaveSourceLabel(action)))
+                        .width(Length::Fixed(200.0)),
+                )
+                .push(
+                    button(text(format!("Save {port} label")))
+                        .on_press_maybe(when(true, Message::SaveSourceLabel(action))),
+                );
+        }
+        content = content.push(row_content);
+        if pending_show == Some(action) {
+            content = content.push(
+                column![
+                    text(format!(
+                        "Show {port}? This offers a request button only. The app cannot check that this port exists or works."
+                    )),
+                    row![
+                        button(text(format!("Confirm show {port}")))
+                            .on_press_maybe(when(true, Message::ConfirmShowSource)),
+                        button("Cancel").on_press(Message::CancelShowSource),
+                    ]
+                    .spacing(8),
+                ]
+                .spacing(6),
+            );
+        }
+    }
+    content.into()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn source_buttons_keep_the_port_beside_a_label() {
+        assert_eq!(
+            source_display(RemoteAction::Hdmi2, Some("PlayStation")),
+            "PlayStation — HDMI 2"
+        );
+        assert_eq!(source_display(RemoteAction::Tuner, None), "TV tuner");
+    }
 
     #[test]
     fn candidate_rows_omit_saved_tvs_and_keep_a_manual_target() {
@@ -1473,6 +1648,7 @@ mod tests {
         let new_host = TvHost::parse("192.168.1.11").unwrap();
         let manual_host = TvHost::parse("192.168.1.12").unwrap();
         let saved = [SavedDevice {
+            sources: Default::default(),
             id: crate::DeviceId::new(1),
             label: "Living Room".to_owned(),
             host: saved_host.clone(),

@@ -15,6 +15,7 @@ use crate::application::certificate_trust::{
 };
 use crate::application::device_repository::{DeviceRepository, RepositoryError, SavedDevice};
 use crate::application::recovery::{ForgetMarker, RecoveryJournal};
+use crate::application::sources::{SourceConfiguration, SourceLabel, SourceSetting};
 use crate::application::tv_address::TvHost;
 use crate::application::wake::{WakeConfiguration, WakeInterface};
 use crate::domain::DeviceId;
@@ -22,7 +23,10 @@ use crate::domain::DeviceId;
 // The full 1,024-record profile can exceed 2 MiB with valid maximally escaped
 // labels and hosts. Keep disk and HTTP bounds consistent without truncation.
 const MAX_FILE_BYTES: u64 = 4 * 1024 * 1024;
-const DEVICE_VERSION: u32 = 2;
+// v3 adds per-TV `sources`. Older builds reject v3 as corrupt instead of
+// silently dropping it; the first v3 write keeps the prior file as a backup.
+const DEVICE_VERSION: u32 = 3;
+const PRE_V3_BACKUP: &str = "devices.pre-v3.json";
 const TRUST_VERSION: u32 = 1;
 
 pub struct LocalDeviceRepository {
@@ -240,13 +244,111 @@ struct DiskDevices {
     devices: Vec<DiskDevice>,
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 struct DiskDevice {
     id: String,
     label: String,
     host: String,
     #[serde(default)]
     wake: Option<serde_json::Value>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    sources: Option<DiskSources>,
+}
+
+/// Typed, unlike `wake`: derived structs reject duplicate and unknown keys.
+#[derive(Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct DiskSources {
+    hdmi1: DiskSource,
+    hdmi2: DiskSource,
+    hdmi3: DiskSource,
+    tuner: DiskSource,
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct DiskSource {
+    state: String,
+    label: Option<String>,
+    confirmed_at_unix_ms: Option<u64>,
+}
+
+fn disk_sources(value: &SourceConfiguration) -> DiskSources {
+    let [hdmi1, hdmi2, hdmi3, tuner] = (*value.ports).clone().map(|setting| match setting {
+        SourceSetting::Unconfigured => DiskSource {
+            state: "unconfigured".into(),
+            label: None,
+            confirmed_at_unix_ms: None,
+        },
+        SourceSetting::Hidden => DiskSource {
+            state: "hidden".into(),
+            label: None,
+            confirmed_at_unix_ms: None,
+        },
+        SourceSetting::Shown {
+            label,
+            confirmed_at_unix_ms,
+        } => DiskSource {
+            state: "shown".into(),
+            label: label.map(|l| l.as_str().to_owned()),
+            confirmed_at_unix_ms: Some(confirmed_at_unix_ms),
+        },
+    });
+    DiskSources {
+        hdmi1,
+        hdmi2,
+        hdmi3,
+        tuner,
+    }
+}
+
+/// Present malformed data fails closed; nothing is invented at startup.
+fn convert_sources(value: DiskSources) -> Result<SourceConfiguration, RepositoryError> {
+    let mut ports: [SourceSetting; 4] = Default::default();
+    for (port, item) in ports
+        .iter_mut()
+        .zip([value.hdmi1, value.hdmi2, value.hdmi3, value.tuner])
+    {
+        *port = match (item.state.as_str(), item.label, item.confirmed_at_unix_ms) {
+            ("unconfigured", None, None) => SourceSetting::Unconfigured,
+            ("hidden", None, None) => SourceSetting::Hidden,
+            ("shown", label, Some(at)) if at > 0 => SourceSetting::Shown {
+                label: match label {
+                    Some(label) => Some(
+                        SourceLabel::parse(&label)
+                            .filter(|parsed| parsed.as_str() == label)
+                            .ok_or(RepositoryError::Corrupt)?,
+                    ),
+                    None => None,
+                },
+                confirmed_at_unix_ms: at,
+            },
+            _ => return Err(RepositoryError::Corrupt),
+        };
+    }
+    Ok(SourceConfiguration {
+        ports: Box::new(ports),
+    })
+}
+
+fn disk_device(device: &SavedDevice) -> Result<DiskDevice, RepositoryError> {
+    Ok(DiskDevice {
+        id: device.id.to_string(),
+        label: device.label.clone(),
+        host: device.host.as_str().to_owned(),
+        wake: Some(
+            serde_json::to_value(DiskWake {
+                wired: device.wake.wired.map(|mac| mac.to_string()),
+                wifi: device.wake.wifi.map(|mac| mac.to_string()),
+                active: device.wake.active.map(|active| match active {
+                    WakeInterface::Wired => "wired".to_owned(),
+                    WakeInterface::WiFi => "wifi".to_owned(),
+                }),
+            })
+            .map_err(|_| RepositoryError::Unavailable)?,
+        ),
+        sources: Some(disk_sources(&device.sources)),
+    })
 }
 
 #[derive(Serialize, Deserialize)]
@@ -348,24 +450,8 @@ impl DeviceRepository for LocalDeviceRepository {
             .lock
             .lock()
             .map_err(|_| RepositoryError::Unavailable)?;
-        let mut disk = self.load()?;
-        disk.version = DEVICE_VERSION;
-        let record = DiskDevice {
-            id: device.id.to_string(),
-            label: device.label.clone(),
-            host: device.host.as_str().to_owned(),
-            wake: Some(
-                serde_json::to_value(DiskWake {
-                    wired: device.wake.wired.map(|mac| mac.to_string()),
-                    wifi: device.wake.wifi.map(|mac| mac.to_string()),
-                    active: device.wake.active.map(|active| match active {
-                        WakeInterface::Wired => "wired".to_owned(),
-                        WakeInterface::WiFi => "wifi".to_owned(),
-                    }),
-                })
-                .map_err(|_| RepositoryError::Unavailable)?,
-            ),
-        };
+        let mut disk = self.load_for_write()?;
+        let record = disk_device(device)?;
         if let Some(existing) = disk.devices.iter_mut().find(|item| item.id == record.id) {
             *existing = record;
         } else {
@@ -382,8 +468,7 @@ impl DeviceRepository for LocalDeviceRepository {
             .lock
             .lock()
             .map_err(|_| RepositoryError::Unavailable)?;
-        let mut disk = self.load()?;
-        disk.version = DEVICE_VERSION;
+        let mut disk = self.load_for_write()?;
         disk.devices.retain(|item| item.id != id.to_string());
         if disk.selected.as_deref() == Some(id.to_string().as_str()) {
             disk.selected = None;
@@ -411,8 +496,7 @@ impl DeviceRepository for LocalDeviceRepository {
             .lock
             .lock()
             .map_err(|_| RepositoryError::Unavailable)?;
-        let mut disk = self.load()?;
-        disk.version = DEVICE_VERSION;
+        let mut disk = self.load_for_write()?;
         if let Some(id) = id {
             if !disk.devices.iter().any(|item| item.id == id.to_string()) {
                 return Err(RepositoryError::Corrupt);
@@ -435,8 +519,40 @@ impl LocalDeviceRepository {
                 _ => RepositoryError::Unavailable,
             })?
             .unwrap_or_default();
-        if disk.version != 1 && disk.version != DEVICE_VERSION {
+        if !(1..=DEVICE_VERSION).contains(&disk.version) {
             return Err(RepositoryError::Corrupt);
+        }
+        Ok(disk)
+    }
+
+    /// Every write path (save, select, delete) migrates through here. A
+    /// fresh profile loads as v3 and needs no backup.
+    fn load_for_write(&self) -> Result<DiskDevices, RepositoryError> {
+        let mut disk = self.load()?;
+        if disk.version < DEVICE_VERSION {
+            // Validate before preserving: a corrupt v1/v2 is never migrated.
+            for item in &disk.devices {
+                convert_device(item.clone())?;
+            }
+            let backup = self
+                .file
+                .sibling(PRE_V3_BACKUP)
+                .map_err(|_| RepositoryError::Unavailable)?;
+            let expected = serde_json::to_value(&disk).map_err(|_| RepositoryError::Unavailable)?;
+            match backup.read::<serde_json::Value>() {
+                // A retry after a failed live write reuses its own backup.
+                Ok(Some(existing)) if existing == expected => {}
+                // Never overwrite a different historical backup.
+                Ok(Some(_)) => return Err(RepositoryError::Corrupt),
+                Ok(None) => backup
+                    .write(&disk)
+                    .map_err(|_| RepositoryError::Unavailable)?,
+                Err(error) if error.kind() == std::io::ErrorKind::InvalidData => {
+                    return Err(RepositoryError::Corrupt)
+                }
+                Err(_) => return Err(RepositoryError::Unavailable),
+            }
+            disk.version = DEVICE_VERSION;
         }
         Ok(disk)
     }
@@ -515,6 +631,11 @@ fn convert_device(item: DiskDevice) -> Result<SavedDevice, RepositoryError> {
         })
         .unwrap_or_default();
     Ok(SavedDevice {
+        sources: item
+            .sources
+            .map(convert_sources)
+            .transpose()?
+            .unwrap_or_default(),
         id: DeviceId::parse_record_key(&item.id).ok_or(RepositoryError::Corrupt)?,
         label: item.label,
         host: TvHost::parse(&item.host).map_err(|_| RepositoryError::Corrupt)?,
@@ -769,6 +890,7 @@ mod tests {
         let repository = LocalDeviceRepository::new(dir.path());
         let trust = LocalCertificateTrustStore::new(dir.path());
         let device = SavedDevice {
+            sources: Default::default(),
             id: DeviceId::generate(),
             label: "TV".to_owned(),
             host: TvHost::parse("tv.local").unwrap(),
@@ -824,7 +946,7 @@ mod tests {
         repository.save(&device).unwrap();
         assert_eq!(repository.list().unwrap(), vec![device]);
         let disk: serde_json::Value = serde_json::from_slice(&fs::read(path).unwrap()).unwrap();
-        assert_eq!(disk["version"], 2);
+        assert_eq!(disk["version"], 3);
     }
 
     #[test]
@@ -886,5 +1008,264 @@ mod tests {
             .unwrap()
             .iter()
             .all(|device| device.get("verified_actions").is_none()));
+    }
+
+    fn legacy_profile(version: u32) -> (tempfile::TempDir, String, serde_json::Value) {
+        let dir = tempfile::tempdir().unwrap();
+        let id = DeviceId::generate().to_string();
+        let document = serde_json::json!({
+            "version": version,
+            "selected": id,
+            "devices": [{"id": id, "label": "TV", "host": "tv.local", "wake": null}]
+        });
+        fs::write(
+            dir.path().join("devices.json"),
+            serde_json::to_vec(&document).unwrap(),
+        )
+        .unwrap();
+        (dir, id, document)
+    }
+
+    fn shown_sources() -> SourceConfiguration {
+        use crate::application::sources::SourceChoice;
+        SourceConfiguration::default().apply(
+            [
+                SourceChoice::Shown(SourceLabel::parse("PlayStation")),
+                SourceChoice::Hidden,
+                SourceChoice::Unconfigured,
+                SourceChoice::Shown(None),
+            ],
+            1_700_000_000_000,
+        )
+    }
+
+    #[test]
+    fn every_first_v3_write_keeps_the_original_version_as_a_backup() {
+        for version in [1, 2] {
+            for write in ["save", "select", "delete"] {
+                let (dir, id, original) = legacy_profile(version);
+                let repository = LocalDeviceRepository::new(dir.path());
+                let mut device = repository.list().unwrap().remove(0);
+                match write {
+                    "save" => {
+                        device.sources = shown_sources();
+                        repository.save(&device).unwrap();
+                        assert_eq!(repository.list().unwrap(), vec![device.clone()]);
+                    }
+                    "select" => repository.select(None).unwrap(),
+                    _ => repository.delete(device.id).unwrap(),
+                }
+                let backup: serde_json::Value =
+                    serde_json::from_slice(&fs::read(dir.path().join(PRE_V3_BACKUP)).unwrap())
+                        .unwrap();
+                assert_eq!(backup["version"], version, "{write}");
+                assert_eq!(backup["devices"][0]["id"], id);
+                assert_eq!(backup["devices"], original["devices"]);
+                let live: serde_json::Value =
+                    serde_json::from_slice(&fs::read(dir.path().join("devices.json")).unwrap())
+                        .unwrap();
+                assert_eq!(live["version"], 3);
+            }
+        }
+    }
+
+    #[test]
+    fn fresh_profiles_need_no_backup_and_conflicting_backups_block_migration() {
+        let dir = tempfile::tempdir().unwrap();
+        let repository = LocalDeviceRepository::new(dir.path());
+        let device = SavedDevice {
+            sources: shown_sources(),
+            id: DeviceId::generate(),
+            label: "TV".into(),
+            host: TvHost::parse("tv.local").unwrap(),
+            wake: WakeConfiguration::default(),
+        };
+        repository.save(&device).unwrap();
+        assert!(!dir.path().join(PRE_V3_BACKUP).exists());
+
+        let (dir, _, original) = legacy_profile(2);
+        // A matching backup from an interrupted earlier attempt is reused.
+        fs::write(
+            dir.path().join(PRE_V3_BACKUP),
+            serde_json::to_vec(&original).unwrap(),
+        )
+        .unwrap();
+        let repository = LocalDeviceRepository::new(dir.path());
+        repository.select(None).unwrap();
+
+        let (dir, _, _) = legacy_profile(2);
+        fs::write(
+            dir.path().join(PRE_V3_BACKUP),
+            br#"{"version":2,"selected":null,"devices":[]}"#,
+        )
+        .unwrap();
+        let repository = LocalDeviceRepository::new(dir.path());
+        let before = fs::read(dir.path().join("devices.json")).unwrap();
+        assert_eq!(repository.select(None), Err(RepositoryError::Corrupt));
+        assert_eq!(fs::read(dir.path().join("devices.json")).unwrap(), before);
+
+        // An unwritable destination blocks before the live file changes.
+        let (dir, _, _) = legacy_profile(1);
+        fs::create_dir(dir.path().join(PRE_V3_BACKUP)).unwrap();
+        let repository = LocalDeviceRepository::new(dir.path());
+        let before = fs::read(dir.path().join("devices.json")).unwrap();
+        assert!(repository.select(None).is_err());
+        assert_eq!(fs::read(dir.path().join("devices.json")).unwrap(), before);
+    }
+
+    #[test]
+    fn malformed_v3_sources_and_future_versions_fail_closed() {
+        let entry = |state: &str| serde_json::json!({"state":state,"label":null,"confirmed_at_unix_ms":null});
+        let shown = serde_json::json!({"state":"shown","label":"PS5","confirmed_at_unix_ms":5});
+        let valid = serde_json::json!({"hdmi1":shown,"hdmi2":entry("hidden"),"hdmi3":entry("unconfigured"),"tuner":entry("unconfigured")});
+        let mut cases = vec![];
+        let mut missing = valid.clone();
+        missing.as_object_mut().unwrap().remove("tuner");
+        cases.push(serde_json::to_string(&missing).unwrap());
+        let mut unknown = valid.clone();
+        unknown["hdmi4"] = entry("hidden");
+        cases.push(serde_json::to_string(&unknown).unwrap());
+        // Duplicate key, spelled by hand; serde_json::Value would keep the last.
+        cases.push(serde_json::to_string(&valid).unwrap().replacen(
+            r#""hdmi2":"#,
+            r#""hdmi2":{"state":"hidden","label":null,"confirmed_at_unix_ms":null},"hdmi2":"#,
+            1,
+        ));
+        for bad in [
+            serde_json::json!({"state":"hidden","label":"x","confirmed_at_unix_ms":null}),
+            serde_json::json!({"state":"shown","label":null,"confirmed_at_unix_ms":0}),
+            serde_json::json!({"state":"shown","label":null,"confirmed_at_unix_ms":null}),
+            serde_json::json!({"state":"shown","label":" padded ","confirmed_at_unix_ms":5}),
+            serde_json::json!({"state":"shown","label":"a\u{202E}b","confirmed_at_unix_ms":5}),
+            serde_json::json!({"state":"active","label":null,"confirmed_at_unix_ms":null}),
+            serde_json::json!({"state":"hidden","label":null,"confirmed_at_unix_ms":3}),
+        ] {
+            let mut value = valid.clone();
+            value["hdmi3"] = bad;
+            cases.push(serde_json::to_string(&value).unwrap());
+        }
+        let id = DeviceId::generate().to_string();
+        for sources in cases {
+            let dir = tempfile::tempdir().unwrap();
+            fs::write(
+                dir.path().join("devices.json"),
+                format!(r#"{{"version":3,"selected":null,"devices":[{{"id":"{id}","label":"TV","host":"tv.local","wake":null,"sources":{sources}}}]}}"#),
+            )
+            .unwrap();
+            assert_eq!(
+                LocalDeviceRepository::new(dir.path()).list(),
+                Err(RepositoryError::Corrupt),
+                "{sources}"
+            );
+        }
+        let dir = tempfile::tempdir().unwrap();
+        fs::write(
+            dir.path().join("devices.json"),
+            format!(r#"{{"version":3,"selected":null,"devices":[{{"id":"{id}","label":"TV","host":"tv.local","wake":null,"sources":{valid}}}]}}"#),
+        )
+        .unwrap();
+        let device = LocalDeviceRepository::new(dir.path())
+            .list()
+            .unwrap()
+            .remove(0);
+        assert_eq!(
+            device.sources.ports[0],
+            SourceSetting::Shown {
+                label: SourceLabel::parse("PS5"),
+                confirmed_at_unix_ms: 5
+            }
+        );
+        fs::write(
+            dir.path().join("devices.json"),
+            br#"{"version":4,"selected":null,"devices":[]}"#,
+        )
+        .unwrap();
+        assert_eq!(
+            LocalDeviceRepository::new(dir.path()).list(),
+            Err(RepositoryError::Corrupt)
+        );
+    }
+
+    #[test]
+    fn maximal_labelled_profile_fits_the_disk_read_limit() {
+        let dir = tempfile::tempdir().unwrap();
+        let repository = LocalDeviceRepository::new(dir.path());
+        let host = format!(
+            "{}.{}.{}.{}",
+            "a".repeat(63),
+            "b".repeat(63),
+            "c".repeat(63),
+            "d".repeat(61)
+        );
+        let label = SourceLabel::parse(&"\"".repeat(24)).unwrap();
+        let sources = SourceConfiguration {
+            ports: Box::new(std::array::from_fn(|_| SourceSetting::Shown {
+                label: Some(label.clone()),
+                confirmed_at_unix_ms: u64::MAX,
+            })),
+        };
+        let mut disk = DiskDevices::default();
+        for _ in 0..1024 {
+            disk.devices.push(
+                disk_device(&SavedDevice {
+                    sources: sources.clone(),
+                    id: DeviceId::generate(),
+                    label: "\u{0001}".repeat(256),
+                    host: TvHost::parse(&host).unwrap(),
+                    wake: WakeConfiguration {
+                        wired: Some("02:00:00:00:00:01".parse().unwrap()),
+                        wifi: Some("02:00:00:00:00:02".parse().unwrap()),
+                        active: Some(WakeInterface::Wired),
+                    },
+                })
+                .unwrap(),
+            );
+        }
+        let bytes = serde_json::to_vec(&disk).unwrap().len();
+        println!("maximal v3 device file={bytes} bytes; limit={MAX_FILE_BYTES}");
+        assert!((bytes as u64) < MAX_FILE_BYTES);
+        repository.file.write(&disk).unwrap();
+        assert_eq!(repository.list().unwrap().len(), 1024);
+    }
+
+    #[test]
+    fn pairing_backups_keep_sources_as_v2_and_legacy_v1_still_reads() {
+        use crate::application::recovery::PairingBackup;
+        let dir = tempfile::tempdir().unwrap();
+        let journal = LocalRecoveryJournal::new(dir.path());
+        let transaction = DeviceId::generate();
+        let device = SavedDevice {
+            sources: shown_sources(),
+            id: DeviceId::generate(),
+            label: "TV".into(),
+            host: TvHost::parse("tv.local").unwrap(),
+            wake: WakeConfiguration::default(),
+        };
+        journal
+            .write_backup(&PairingBackup {
+                transaction,
+                device: device.clone(),
+                trust: None,
+            })
+            .unwrap();
+        let path = dir.path().join("pairing-backup.json");
+        let mut disk: serde_json::Value =
+            serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+        assert_eq!(disk["version"], 2);
+        assert_eq!(journal.read_backup(transaction).unwrap().device, device);
+        // A v1 backup predates sources and restores them as unconfigured.
+        disk["version"] = serde_json::json!(1);
+        disk["device"].as_object_mut().unwrap().remove("sources");
+        fs::write(&path, serde_json::to_vec(&disk).unwrap()).unwrap();
+        assert_eq!(
+            journal.read_backup(transaction).unwrap().device.sources,
+            SourceConfiguration::default()
+        );
+        disk["version"] = serde_json::json!(3);
+        fs::write(&path, serde_json::to_vec(&disk).unwrap()).unwrap();
+        assert_eq!(
+            journal.read_backup(transaction).unwrap_err(),
+            RepositoryError::Corrupt
+        );
     }
 }

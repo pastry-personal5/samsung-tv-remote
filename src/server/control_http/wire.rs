@@ -2,6 +2,7 @@
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 use crate::application::control_service::{CandidateId, Epoch, OperationId};
+use crate::application::sources::{SourceChoice, SourceConfiguration, SourceLabel, SourceSetting};
 use crate::domain::DeviceId;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -115,5 +116,132 @@ impl<'de> Deserialize<'de> for Counter {
             return Err(serde::de::Error::custom("noncanonical counter"));
         }
         Ok(Self(number))
+    }
+}
+
+/// Source block shared by requests, responses and the native client. Typed
+/// structs reject missing, duplicate and unknown keys before any effect.
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Sources {
+    hdmi1: SourceEntry,
+    hdmi2: SourceEntry,
+    hdmi3: SourceEntry,
+    tuner: SourceEntry,
+}
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct SourceEntry {
+    state: SourceState,
+    #[serde(default)]
+    label: Option<String>,
+    /// Present only in owner responses; a request cannot assert evidence.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    confirmed_at_unix_ms: Option<Counter>,
+}
+#[derive(Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+enum SourceState {
+    Unconfigured,
+    Hidden,
+    Shown,
+}
+
+impl Sources {
+    fn entries(self) -> [SourceEntry; 4] {
+        [self.hdmi1, self.hdmi2, self.hdmi3, self.tuner]
+    }
+    fn from_entries([hdmi1, hdmi2, hdmi3, tuner]: [SourceEntry; 4]) -> Self {
+        Self {
+            hdmi1,
+            hdmi2,
+            hdmi3,
+            tuner,
+        }
+    }
+    pub fn from_choices(choices: &[SourceChoice; 4]) -> Self {
+        Self::from_entries(choices.clone().map(|choice| match choice {
+            SourceChoice::Unconfigured => SourceEntry::bare(SourceState::Unconfigured),
+            SourceChoice::Hidden => SourceEntry::bare(SourceState::Hidden),
+            SourceChoice::Shown(label) => SourceEntry {
+                state: SourceState::Shown,
+                label: label.map(|l| l.as_str().to_owned()),
+                confirmed_at_unix_ms: None,
+            },
+        }))
+    }
+    pub fn from_configuration(value: &SourceConfiguration) -> Self {
+        Self::from_entries((*value.ports).clone().map(|setting| match setting {
+            SourceSetting::Unconfigured => SourceEntry::bare(SourceState::Unconfigured),
+            SourceSetting::Hidden => SourceEntry::bare(SourceState::Hidden),
+            SourceSetting::Shown {
+                label,
+                confirmed_at_unix_ms,
+            } => SourceEntry {
+                state: SourceState::Shown,
+                label: label.map(|l| l.as_str().to_owned()),
+                confirmed_at_unix_ms: Some(Counter(confirmed_at_unix_ms)),
+            },
+        }))
+    }
+    /// Request form: labels only on Shown, validated, and no timestamps.
+    pub fn choices(self) -> Option<[SourceChoice; 4]> {
+        let entries = self.entries();
+        if entries.iter().any(|e| e.confirmed_at_unix_ms.is_some()) {
+            return None;
+        }
+        let mut choices: [SourceChoice; 4] = Default::default();
+        for (choice, entry) in choices.iter_mut().zip(entries) {
+            *choice = match (entry.state, entry.label) {
+                (SourceState::Unconfigured, None) => SourceChoice::Unconfigured,
+                (SourceState::Hidden, None) => SourceChoice::Hidden,
+                (SourceState::Shown, None) => SourceChoice::Shown(None),
+                (SourceState::Shown, Some(label)) => {
+                    SourceChoice::Shown(Some(SourceLabel::parse(&label)?))
+                }
+                _ => return None,
+            };
+        }
+        Some(choices)
+    }
+    /// Response form: a Shown entry needs a positive time; others have none.
+    pub fn configuration(self) -> Option<SourceConfiguration> {
+        let mut ports: [SourceSetting; 4] = Default::default();
+        for (port, entry) in ports.iter_mut().zip(self.entries()) {
+            *port = match (entry.state, entry.label, entry.confirmed_at_unix_ms) {
+                (SourceState::Unconfigured, None, None) => SourceSetting::Unconfigured,
+                (SourceState::Hidden, None, None) => SourceSetting::Hidden,
+                (SourceState::Shown, label, Some(Counter(at))) if at > 0 => {
+                    let label = match label {
+                        Some(label) => {
+                            let parsed = SourceLabel::parse(&label)?;
+                            // Stored spelling is already trimmed; anything else is malformed.
+                            if parsed.as_str() != label {
+                                return None;
+                            }
+                            Some(parsed)
+                        }
+                        None => None,
+                    };
+                    SourceSetting::Shown {
+                        label,
+                        confirmed_at_unix_ms: at,
+                    }
+                }
+                _ => return None,
+            };
+        }
+        Some(SourceConfiguration {
+            ports: Box::new(ports),
+        })
+    }
+}
+impl SourceEntry {
+    fn bare(state: SourceState) -> Self {
+        Self {
+            state,
+            label: None,
+            confirmed_at_unix_ms: None,
+        }
     }
 }

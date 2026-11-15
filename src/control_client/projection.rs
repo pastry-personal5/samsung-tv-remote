@@ -65,7 +65,17 @@ pub fn device(v: &Value) -> Result<SavedDevice, ClientError> {
     if label.len() > 256 {
         return Err(invalid());
     }
+    // Only the selected snapshot entry and details carry sources. Absence is
+    // display-only Unconfigured; the editor saves against a fresh revision.
+    let sources = match v.get("sources") {
+        None => Default::default(),
+        Some(value) => serde_json::from_value::<wire::Sources>(value.clone())
+            .ok()
+            .and_then(wire::Sources::configuration)
+            .ok_or_else(invalid)?,
+    };
     Ok(SavedDevice {
+        sources,
         id: id(v, "device_id")?,
         label: label.into(),
         host: TvHost::parse(text(v, "host")?).map_err(|_| invalid())?,
@@ -189,10 +199,9 @@ pub fn snapshot(v: &Value) -> Result<Snapshot, ClientError> {
         let summary = decode_capabilities(value, epoch, &control)?;
         if blocked
             && (summary.ime_active
-                || summary
-                    .facts
-                    .iter()
-                    .any(|f| f.freshness == crate::domain::capability::Freshness::Current))
+                || summary.facts.iter().any(|f| {
+                    f.freshness == crate::domain::capability::Freshness::Current && !f.durable()
+                }))
         {
             return Err(invalid());
         }
@@ -290,7 +299,10 @@ fn decode_capabilities(
         if !fact.valid() {
             return Err(invalid());
         }
+        // Durable source preferences are current without a session; the
+        // summary reason, not the fact, still governs eligibility.
         if fact.freshness == Freshness::Current
+            && !fact.durable()
             && (control.selected_device() != Some(device)
                 || control.connection_state() != ConnectionState::Ready
                 || control.pairing_state() != PairingState::Ready
@@ -321,7 +333,7 @@ fn decode_capabilities(
     }
     let mut session = None;
     for fact in &summary.facts {
-        if fact.freshness == Freshness::Current {
+        if fact.freshness == Freshness::Current && !fact.durable() {
             if session.is_some_and(|s| fact.context != Some(s)) {
                 return Err(invalid());
             }
@@ -703,6 +715,18 @@ pub fn encode(request: &Request) -> Result<(&'static str, String, Value), Client
             (
                 format!("/v1/devices/{}/wake", wire::device(*target)),
                 json!({"device_id":wire::device(*target),"selection_generation":Counter(*generation),"expected_config_revision":Counter(*revision),"wired_mac":configuration.wired.map(|m|m.to_string()),"wifi_mac":configuration.wifi.map(|m|m.to_string()),"active_interface":configuration.active.map(|v|match v{WakeInterface::Wired=>"Wired",WakeInterface::WiFi=>"WiFi"})}),
+            )
+        }
+        Command::SetSources {
+            target,
+            generation,
+            revision,
+            choices,
+        } => {
+            method = "PUT";
+            (
+                format!("/v1/devices/{}/sources", wire::device(*target)),
+                json!({"device_id":wire::device(*target),"selection_generation":Counter(*generation),"expected_config_revision":Counter(*revision),"sources":wire::Sources::from_choices(choices)}),
             )
         }
         Command::Forget {

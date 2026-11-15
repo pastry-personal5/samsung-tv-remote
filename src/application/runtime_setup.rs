@@ -99,6 +99,7 @@ impl Owner {
                 saved
             }
             None => SavedDevice {
+                sources: Default::default(),
                 id: DeviceId::generate(),
                 label: context.label.clone(),
                 host: context.host.clone(),
@@ -313,7 +314,7 @@ impl Owner {
                 self.finish(
                     id,
                     match result {
-                        Ok(device) => Outcome::Paired(device),
+                        Ok(device) => Outcome::Paired(Box::new(device)),
                         Err(error) => Outcome::PairFailed(PairFlowError::Setup(error)),
                     },
                 );

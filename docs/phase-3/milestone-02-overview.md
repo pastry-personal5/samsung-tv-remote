@@ -1,6 +1,6 @@
 # P3-M2: Sources
 
-Status: Proposal — planned 2026-11-14; implementation not authorized.
+Status: Active — offline implementation 2026-11-15; hardware, MCP budget and release acceptance open.
 
 ## Goal
 
@@ -12,9 +12,19 @@ storage, admission and projections. The [plan
 review](milestone-02-plan-review.md) records corrections against the current
 code and remaining owner decisions.
 
-## Entry gate
+## Implementation authorization — 2026-11-15
 
-This record plans M2. It does not authorize implementation.
+The owner requested “Impl. P3-M2.” Like
+[M1's](milestone-01-overview.md#implementation-authorization--2026-11-14), this
+authorizes offline code and fake-session validation ahead of P3-M1 and Phase 2
+acceptance. It does not supply hardware evidence or complete M2. The owner
+then accepted the implemented defaults and the budget on 2026-11-15: the
+tuner is configurable like an HDMI port; source editing is GUI/HTTP only (MCP
+reads through `inspect_tv` and sends through `remote_action`); and the MCP
+catalog is re-baselined at 58,820 bytes (+83). The [implementation
+record](milestone-02-implementation.md) lists what was built and what is open.
+
+## Entry gate
 
 - P3-M1 is Active. Its offline capability foundation exists; its spike has not
   run. Phase 2 is not Done.
@@ -23,8 +33,9 @@ This record plans M2. It does not authorize implementation.
   [M1's](milestone-01-overview.md#implementation-authorization--2026-11-14).
 - The per-key hardware results, including after Wake and reconnect, need a
   hands-on session. That gate blocks acceptance, not offline code.
-- The MCP additions need a measured offset or an owner re-baseline before they
-  ship (see [phase rules](phase-3.md#phase-wide-rules)).
+- The MCP additions needed a measured offset or an owner re-baseline (see
+  [phase rules](phase-3.md#phase-wide-rules)); the owner re-baselined the
+  catalog on 2026-11-15.
 
 ## Scope
 
@@ -34,8 +45,10 @@ This record plans M2. It does not authorize implementation.
 - The Sources menu key is always offered while connected. It opens the TV's own
   menu for manual D-pad use, with no scripted traversal.
 - Source keys are new `RemoteAction` values. They take the Phase 1 admission,
-  queue and outcome path. Admission rejects a key the user has not shown as
-  `not_sent`. An `uncertain` send is never replayed.
+  queue and outcome path. Admission rejects a key the user has not shown
+  (`source_unconfigured` or `source_hidden`, HTTP 412, like
+  `wake_not_configured`); it is never sent. An `uncertain` send is never
+  replayed.
 - Source configuration is stored in the saved-TV record. It shares the Wake
   config revision, survives restart and re-pair, and Forget removes it.
 - The GUI Sources view and the Settings editor. HTTP read and write. MCP gets
@@ -52,9 +65,9 @@ This record plans M2. It does not authorize implementation.
 
 | Slice | Work | Exit evidence |
 | --- | --- | --- |
-| 1. Gate | Record the owner exception, the MCP lane choice and the label-editing decision. | Changelog entry with links. |
+| 1. Gate | Record the owner exception, the MCP lane choice, the label-editing decision and the tuner reading. | Changelog entry with links. |
 | 2. Model and storage | Domain source keys, per-TV `SourceConfiguration`, device format v3 with backup, pairing-backup field and versioned backup envelope. | Migration tests from v1/v2 fixtures; Forget and re-pair-recovery tests. |
-| 3. Admission | `SetSources` command, typed storage write, source-key admission and codec mapping. | Stale-revision/selection/key tests; hidden-key `not_sent`; no replay; exact effect counts with fakes. |
+| 3. Admission | `SetSources` command, typed storage write, source-key admission and codec mapping. | Stale-revision/selection/key tests; hidden and unconfigured rejection codes and precedence; no replay; exact effect counts with fakes. |
 | 4. Projections | HTTP route, snapshot/detail/SSE and native decode, MCP enum and `inspect_tv`. | Round trip, old-response fallback, 1,024-TV size re-measurement, catalog/result bytes. |
 | 5. GUI | Sources view, Settings editor, uncertain-save handling. | View-model tests; keyboard, VoiceOver and disabled-reason review. |
 | 6. Hardware | Matrix below, through the product path. | `milestone-02-evidence.md` with no addresses or tokens. |
@@ -73,7 +86,8 @@ synthetic TV alias, never network details.
 | Tuner | Send once. | Repeat. | Effect, or no antenna. |
 | Sources menu | Send once; dismiss with Back. | Repeat. | Menu opened or not. |
 
-Record `not_sent`, `written` or `uncertain` exactly as the product reports it;
+Record the rejection code or the terminal outcome (`not_sent`, `written` or
+`uncertain`) exactly as the product reports it;
 record panel effect separately. An inconclusive case remains open or needs an
 explicit scope decision; a missing antenna/cable is not a passing key test. For
 a completed local write, the reported outcome stays `written`. The panel effect
@@ -81,14 +95,18 @@ is human evidence only for that key and TV.
 
 ## Completion checklist
 
-- [ ] Gate recorded: implementation exception, MCP budget lane, label-editing
-  decision.
-- [ ] Only shown keys are admitted. Unconfigured and hidden keys return
-  `not_sent` with a distinct reason. The Sources menu needs no configuration.
+- [x] Gate recorded: implementation exception, MCP budget lane, label-editing
+  decision, tuner reading (configurable or always shown).
+- [ ] Only shown keys are admitted. Unconfigured and hidden keys are rejected
+  with distinct 412 codes and are never sent; the rejection outranks
+  connection and queue guards, after stale selection. The Sources menu needs no
+  configuration. Wire names match `RemoteAction`'s PascalCase serde spelling.
 - [ ] No result, event or GUI string claims an active input. Writes never set
   support.
 - [ ] `SetSources` rejects a stale epoch, selection, generation, config
-  revision or malformed replacement, and its uncertain save reconciles
+  revision or malformed replacement (including a stale-generation request
+  that a missing wildcard arm would let through), never fences the session,
+  and its uncertain save reconciles
   authoritative sources and timestamps before releasing the shared storage
   lane. An identical operation retry returns its retained receipt;
   changed-payload key reuse conflicts without another write.
@@ -111,8 +129,8 @@ is human evidence only for that key and TV.
   escaped labels, mixed durable/session facts and maximum counters. Disk bounds
   are measured separately. Omitted unselected details cannot overwrite
   settings.
-- [ ] MCP catalog stays at 15 tools; catalog and result growth are measured and
-  paid for or re-baselined.
+- [x] MCP catalog stays at 15 tools; catalog growth (+83 bytes) is measured and
+  re-baselined by the owner.
 - [ ] GUI: keyboard access, VoiceOver labels, disabled explanations.
 - [ ] Two-client source/Wake edits conflict at one shared revision. Save
   acknowledgment loss, timeout, restart, selection change, queue pressure and

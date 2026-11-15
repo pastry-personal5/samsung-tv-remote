@@ -463,6 +463,7 @@ mod tests {
     ) {
         let mut owner = Owner::new(AppServices::without_adapters(), RuntimeLimits::default());
         let tv = SavedDevice {
+            sources: Default::default(),
             id: DeviceId::new(1),
             label: "Synthetic".into(),
             host: super::super::super::tv_address::TvHost::parse("synthetic.invalid").unwrap(),

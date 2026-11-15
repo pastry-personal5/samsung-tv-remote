@@ -12,7 +12,16 @@ pub enum SettingsPage {
     #[default]
     Discovery,
     WakeOnLan,
+    Sources,
     Servers,
+}
+
+/// One explicit edit of a source key; Show needs a second confirmation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SourceEdit {
+    Show,
+    Hide,
+    Reset,
 }
 
 #[derive(Debug, Clone)]
@@ -43,6 +52,14 @@ pub enum Message {
     WakeInterfaceSelected(WakeInterface),
     WakeInterfaceCleared,
     ReloadWakeSettings,
+    /// One finite source-key request for the selected TV.
+    SendSource(RemoteAction),
+    EditSource(RemoteAction, SourceEdit),
+    ConfirmShowSource,
+    CancelShowSource,
+    SourceLabelChanged(RemoteAction, String),
+    SaveSourceLabel(RemoteAction),
+    OpenSourceSettings,
     TvAddressChanged(String),
     DiscoverTv,
     UseCandidate(TvHost),

@@ -171,6 +171,7 @@ impl TvSetupPort for Setup {
         reconnect_material(id:DeviceId)->Result<ReconnectMaterial,ReconnectError>;
         save_rotated_token(id:DeviceId,token:&PairingToken)->Result<(),SecretError>;
         save_wake_configuration(id:DeviceId,wake:WakeConfiguration)->Result<SavedDevice,RepositoryError>;
+        save_sources(id:DeviceId,sources:samsung_tv_remote::application::sources::SourceConfiguration)->Result<SavedDevice,RepositoryError>;
         forget(id:DeviceId)->ForgetResult;
         pending_recovery()->Result<Option<ForgetMarker>,RepositoryError>;
         forget_durable(id:DeviceId)->Result<ForgetResult,RepositoryError>;

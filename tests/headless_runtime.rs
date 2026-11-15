@@ -5,7 +5,11 @@ use samsung_tv_remote::application::certificate_trust::CertificatePin;
 use samsung_tv_remote::application::control_service::*;
 use samsung_tv_remote::application::credential_store::{PairingToken, SecretError};
 use samsung_tv_remote::application::device_repository::{RepositoryError, SavedDevice};
+use samsung_tv_remote::application::remote_dispatcher::TerminalOutcome as SourceTerminal;
 use samsung_tv_remote::application::runtime::{Runtime, RuntimeLimits};
+use samsung_tv_remote::application::sources::{
+    SourceChoice, SourceConfiguration, SourceLabel, SourceSetting,
+};
 use samsung_tv_remote::application::tv_address::TvHost;
 use samsung_tv_remote::application::tv_control_coordinator::{AppServices, WakeStage};
 use samsung_tv_remote::application::tv_discovery::{DiscoveryError, TvDiscovery};
@@ -14,6 +18,7 @@ use samsung_tv_remote::application::tv_setup_service::{
     ForgetResult, ReconnectError, ReconnectMaterial, SetupError, TvSetupPort,
 };
 use samsung_tv_remote::application::wake::WakeConfiguration;
+use samsung_tv_remote::domain::capability::{CapabilityKey, EvidenceSource, Freshness, Support};
 use samsung_tv_remote::DeviceId;
 use tokio::sync::Semaphore;
 
@@ -108,6 +113,25 @@ impl TvSetupPort for FakeSetup {
         }
         Ok(result)
     }
+    fn save_sources(
+        &self,
+        id: DeviceId,
+        sources: SourceConfiguration,
+    ) -> Result<SavedDevice, RepositoryError> {
+        let mut profile = self.profile.lock().unwrap();
+        let device = profile
+            .devices
+            .iter_mut()
+            .find(|device| device.id == id)
+            .ok_or(RepositoryError::Corrupt)?;
+        device.sources = sources;
+        let result = device.clone();
+        profile.writes += 1;
+        if profile.fail_after_write {
+            return Err(RepositoryError::Unavailable);
+        }
+        Ok(result)
+    }
     fn commit_pairing(
         &self,
         _: &str,
@@ -169,6 +193,7 @@ impl TvDiscovery for FakeDiscovery {
 
 fn device(id: u64) -> SavedDevice {
     SavedDevice {
+        sources: Default::default(),
         id: DeviceId::new(id),
         label: "TV".into(),
         host: TvHost::parse("tv.local").unwrap(),
@@ -2046,5 +2071,275 @@ async fn revocation_between_middleware_and_owner_prevents_admission() {
         .recent_operations
         .is_empty());
     assert_eq!(setup.profile.lock().unwrap().writes, 0);
+    runtime.drain().await.settled().await.unwrap();
+}
+
+fn source_choices(hdmi1: SourceChoice, hdmi2: SourceChoice) -> [SourceChoice; 4] {
+    [
+        hdmi1,
+        hdmi2,
+        SourceChoice::Unconfigured,
+        SourceChoice::Unconfigured,
+    ]
+}
+
+fn set_sources(revision: u64, generation: u64, choices: [SourceChoice; 4]) -> Command {
+    Command::SetSources {
+        target: DeviceId::new(1),
+        generation,
+        revision,
+        choices,
+    }
+}
+
+fn remote(action: RemoteAction) -> Command {
+    Command::Remote(SendRemoteAction::new(DeviceId::new(1), 0, action))
+}
+
+#[tokio::test]
+async fn source_configuration_gates_admission_shares_the_wake_revision_and_never_fences() {
+    let setup = Arc::new(FakeSetup::default());
+    {
+        let mut profile = setup.profile.lock().unwrap();
+        profile.devices = vec![device(1)];
+        profile.selected = Some(DeviceId::new(1));
+    }
+    let writes = Arc::new(Mutex::new(Vec::new()));
+    let mut adapters = services(setup.clone());
+    adapters.gateway = Some(Arc::new(FakeGateway {
+        writes: writes.clone(),
+        uncertain: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+        hold_writes: false,
+    }));
+    let runtime = Runtime::start(adapters, RuntimeLimits::default());
+    let service = runtime.client(ClientId(1));
+    let snapshot = ready(&service).await;
+
+    // Rejections precede the dispatcher: disconnected still says why.
+    let unconfigured = service
+        .submit(request(
+            &snapshot,
+            "hdmi1-unconfigured",
+            remote(RemoteAction::Hdmi1),
+        ))
+        .await
+        .unwrap();
+    assert!(matches!(
+        unconfigured.outcome,
+        Some(Outcome::Rejected(Rejection::SourceUnconfigured))
+    ));
+    // A stale generation is rejected by the selection fence, with no write.
+    let stale = service
+        .submit(request(
+            &snapshot,
+            "stale-generation",
+            set_sources(
+                0,
+                7,
+                source_choices(SourceChoice::Hidden, SourceChoice::Hidden),
+            ),
+        ))
+        .await
+        .unwrap();
+    assert!(matches!(
+        stale.outcome,
+        Some(Outcome::Rejected(Rejection::StaleSelection))
+    ));
+    assert_eq!(setup.profile.lock().unwrap().writes, 0);
+
+    service
+        .submit(request(
+            &snapshot,
+            "connect",
+            Command::Connect {
+                target: DeviceId::new(1),
+                generation: 0,
+                only_if_idle: false,
+            },
+        ))
+        .await
+        .unwrap();
+    terminal(&service, &snapshot, "connect").await;
+
+    let label = SourceLabel::parse("PlayStation");
+    let save = request(
+        &snapshot,
+        "save",
+        set_sources(
+            0,
+            0,
+            source_choices(SourceChoice::Hidden, SourceChoice::Shown(label.clone())),
+        ),
+    );
+    let first = service.submit(save.clone()).await.unwrap();
+    assert!(matches!(
+        terminal(&service, &snapshot, "save").await.outcome,
+        Some(Outcome::Saved(_))
+    ));
+    let after = service.snapshot().await.unwrap();
+    // A configuration save never disconnects the session.
+    assert_eq!(
+        after.control.connection_state(),
+        samsung_tv_remote::application::ConnectionState::Ready
+    );
+    assert_eq!(after.configuration_revisions[0].1, 1);
+    let hdmi2 = after.capabilities[0].fact(CapabilityKey::Hdmi2);
+    assert_eq!(
+        (hdmi2.support, hdmi2.source, hdmi2.context, hdmi2.freshness),
+        (
+            Support::Supported,
+            EvidenceSource::UserConfirmation,
+            None,
+            Freshness::Current
+        )
+    );
+    assert_eq!(
+        after.capabilities[0].fact(CapabilityKey::Hdmi1).support,
+        Support::Unknown
+    );
+    // Identical retry returns the retained receipt; a changed payload conflicts.
+    assert_eq!(service.submit(save).await.unwrap().id, first.id);
+    assert_eq!(
+        service
+            .submit(request(
+                &snapshot,
+                "save",
+                set_sources(
+                    0,
+                    0,
+                    source_choices(SourceChoice::Hidden, SourceChoice::Hidden)
+                ),
+            ))
+            .await
+            .unwrap_err(),
+        ServiceError::KeyConflict
+    );
+    assert_eq!(setup.profile.lock().unwrap().writes, 1);
+    // The shared revision makes a Wake edit from the old revision stale.
+    let wake = service
+        .submit(request(
+            &snapshot,
+            "wake-stale",
+            Command::SetWake {
+                target: DeviceId::new(1),
+                generation: 0,
+                revision: 0,
+                configuration: WakeConfiguration::default(),
+            },
+        ))
+        .await
+        .unwrap();
+    assert!(matches!(
+        wake.outcome,
+        Some(Outcome::Rejected(Rejection::StaleConfiguration))
+    ));
+
+    let hidden = service
+        .submit(request(
+            &snapshot,
+            "hdmi1-hidden",
+            remote(RemoteAction::Hdmi1),
+        ))
+        .await
+        .unwrap();
+    assert!(matches!(
+        hidden.outcome,
+        Some(Outcome::Rejected(Rejection::SourceHidden))
+    ));
+    service
+        .submit(request(&snapshot, "hdmi2", remote(RemoteAction::Hdmi2)))
+        .await
+        .unwrap();
+    assert!(matches!(
+        terminal(&service, &snapshot, "hdmi2").await.outcome,
+        Some(Outcome::Remote(SourceTerminal::Written))
+    ));
+    service
+        .submit(request(&snapshot, "menu", remote(RemoteAction::SourceMenu)))
+        .await
+        .unwrap();
+    terminal(&service, &snapshot, "menu").await;
+    // Exactly one write per explicit press; hidden/unconfigured sent nothing.
+    assert_eq!(
+        *writes.lock().unwrap(),
+        vec![RemoteAction::Hdmi2, RemoteAction::SourceMenu]
+    );
+    // Relabelling keeps the confirmation time.
+    let before = after.devices[0].sources.ports[1].clone();
+    service
+        .submit(request(
+            &snapshot,
+            "relabel",
+            set_sources(
+                1,
+                0,
+                source_choices(
+                    SourceChoice::Hidden,
+                    SourceChoice::Shown(SourceLabel::parse("PS5")),
+                ),
+            ),
+        ))
+        .await
+        .unwrap();
+    terminal(&service, &snapshot, "relabel").await;
+    let relabelled = service.snapshot().await.unwrap().devices[0].sources.ports[1].clone();
+    match (before, relabelled) {
+        (
+            SourceSetting::Shown {
+                confirmed_at_unix_ms: a,
+                ..
+            },
+            SourceSetting::Shown {
+                confirmed_at_unix_ms: b,
+                label,
+            },
+        ) => {
+            assert_eq!(a, b);
+            assert_eq!(label, SourceLabel::parse("PS5"));
+        }
+        other => panic!("{other:?}"),
+    }
+    runtime.drain().await;
+}
+
+#[tokio::test]
+async fn uncertain_source_save_reconciles_the_committed_configuration_and_revision() {
+    let setup = Arc::new(FakeSetup::default());
+    {
+        let mut profile = setup.profile.lock().unwrap();
+        profile.devices = vec![device(1)];
+        profile.selected = Some(DeviceId::new(1));
+        profile.fail_after_write = true;
+    }
+    let runtime = Runtime::start(services(setup.clone()), RuntimeLimits::default());
+    let service = runtime.client(ClientId(1));
+    let snapshot = ready(&service).await;
+    service
+        .submit(request(
+            &snapshot,
+            "save",
+            set_sources(
+                0,
+                0,
+                source_choices(SourceChoice::Shown(None), SourceChoice::Hidden),
+            ),
+        ))
+        .await
+        .unwrap();
+    assert!(matches!(
+        terminal(&service, &snapshot, "save").await.outcome,
+        Some(Outcome::StorageFailed(RepositoryError::Unavailable))
+    ));
+    let after = service.snapshot().await.unwrap();
+    assert!(matches!(
+        after.devices[0].sources.ports[0],
+        SourceSetting::Shown { label: None, .. }
+    ));
+    assert_eq!(after.devices[0].sources.ports[1], SourceSetting::Hidden);
+    assert!(after
+        .configuration_revisions
+        .contains(&(DeviceId::new(1), 1)));
+    assert!(!after.storage_pending);
+    assert_eq!(setup.profile.lock().unwrap().writes, 1);
     runtime.drain().await.settled().await.unwrap();
 }

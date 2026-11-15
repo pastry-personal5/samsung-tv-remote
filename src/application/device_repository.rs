@@ -1,5 +1,6 @@
 use crate::domain::{DeviceDisplay, DeviceId};
 
+use super::sources::SourceConfiguration;
 use super::tv_address::TvHost;
 use super::wake::WakeConfiguration;
 
@@ -11,6 +12,7 @@ pub struct SavedDevice {
     pub label: String,
     pub host: TvHost,
     pub wake: WakeConfiguration,
+    pub sources: SourceConfiguration,
 }
 
 impl SavedDevice {

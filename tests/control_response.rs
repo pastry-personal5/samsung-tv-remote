@@ -20,6 +20,7 @@ use samsung_tv_remote::server::control_http::{response, wire};
 
 fn saved() -> SavedDevice {
     SavedDevice {
+        sources: Default::default(),
         id: DeviceId::new(1),
         label: "Synthetic TV".into(),
         host: TvHost::parse("tv.local").unwrap(),
@@ -94,8 +95,12 @@ fn every_top_level_outcome_has_a_safe_terminal_representation() {
             200,
             "probed",
         ),
-        (Outcome::Paired(saved()), 200, "tv_approved_and_saved"),
-        (Outcome::Saved(saved()), 200, "saved"),
+        (
+            Outcome::Paired(Box::new(saved())),
+            200,
+            "tv_approved_and_saved",
+        ),
+        (Outcome::Saved(Box::new(saved())), 200, "saved"),
         (Outcome::Connected, 200, "remote_ready"),
         (Outcome::Remote(TerminalOutcome::Written), 200, "written"),
         (
@@ -411,6 +416,7 @@ fn maximum_profile_snapshot_and_sse_fit_the_bounded_output_budget() {
     .join(".");
     let devices: Vec<_> = (0..1024)
         .map(|n| SavedDevice {
+            sources: Default::default(),
             id: DeviceId::new(n),
             label: "\u{0001}".repeat(256),
             host: TvHost::parse(&host).unwrap(),

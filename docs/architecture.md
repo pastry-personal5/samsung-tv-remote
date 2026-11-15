@@ -113,3 +113,27 @@ screen-reader support need further verification; see [Phase 1](phase-1/phase-1.m
 Use deterministic fakes for protocol, pairing, and network-boundary tests.
 The [contribution guide](contribution-guide.md) defines validation. Historical
 designs and milestone plans are in the [archive](archive/).
+
+## Saved-TV storage format
+
+`devices.json` is version 3. Each record may carry `sources`: the per-TV
+Shown/Hidden/Unconfigured choice and optional label for HDMI 1–3 and the tuner,
+with the time the user first showed each key. v1/v2 records read as
+unconfigured. Malformed present source data fails closed as corrupt storage.
+Builds before v3 report a v3 file as corrupt rather than silently dropping
+the field.
+
+The first v3 write (save, select or delete) first preserves the validated
+v1/v2 document, with its original version, as `devices.pre-v3.json` in the
+same private directory and envelope. A retry reuses an identical backup; a
+different existing backup blocks the write. The backup is a historical
+recovery artifact: it is never loaded automatically, Forget does not edit it,
+and it can contain TVs forgotten later. Remove it manually once the v3 profile
+is accepted. Pairing backups (`pairing-backup.json`) are written as version 2,
+which carries `sources`; version 1 backups remain readable.
+
+Downgrading is an explicit offline rollback, not a merge. Stop the owner and
+settle any Forget or pairing recovery first. Restoring `devices.pre-v3.json`
+over `devices.json` discards every later edit and can restore forgotten
+records whose Keychain credential and certificate trust were already removed;
+re-pair such TVs instead of relying on the restored record.

@@ -11,6 +11,7 @@ pub mod recovery;
 pub mod remote_dispatcher;
 pub mod remote_request;
 pub mod runtime;
+pub mod sources;
 pub mod tv_address;
 pub mod tv_control_coordinator;
 pub mod tv_discovery;

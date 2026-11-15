@@ -96,6 +96,14 @@ pub enum Command {
         revision: u64,
         configuration: WakeConfiguration,
     },
+    /// Full replacement of the four configurable source keys. Shares the
+    /// Wake config revision, so either edit makes the other stale.
+    SetSources {
+        target: DeviceId,
+        generation: u64,
+        revision: u64,
+        choices: [super::sources::SourceChoice; 4],
+    },
     Connect {
         target: DeviceId,
         generation: u64,
@@ -165,9 +173,10 @@ pub(crate) fn display_deadline(retention: std::time::Duration) -> std::num::NonZ
 pub enum Outcome {
     Discovered(Vec<Candidate>),
     Probed(Box<Observation>),
-    Paired(SavedDevice),
+    // Boxed: receipts are retained in bulk; keep the common variants small.
+    Paired(Box<SavedDevice>),
     PairFailed(super::tv_control_coordinator::PairFlowError),
-    Saved(SavedDevice),
+    Saved(Box<SavedDevice>),
     Connected,
     ConnectFailed(super::tv_control_coordinator::ConnectFlowError),
     Remote(TerminalOutcome),
@@ -198,6 +207,10 @@ pub enum Rejection {
     Oversize,
     InvalidConfirmation,
     WakeNotConfigured,
+    /// The user has not chosen to show this source key. Never sent.
+    SourceUnconfigured,
+    /// The user hid this source key. Never sent.
+    SourceHidden,
     MissingOperation,
     InvalidObservation,
 }
@@ -216,6 +229,9 @@ impl Command {
                 target, generation, ..
             }
             | Self::SetWake {
+                target, generation, ..
+            }
+            | Self::SetSources {
                 target, generation, ..
             }
             | Self::Wake { target, generation }

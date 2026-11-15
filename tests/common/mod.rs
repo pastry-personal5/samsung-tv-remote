@@ -59,6 +59,19 @@ impl TvSetupPort for MemorySetup {
         device.wake = wake;
         Ok(device.clone())
     }
+    fn save_sources(
+        &self,
+        id: DeviceId,
+        sources: samsung_tv_remote::application::sources::SourceConfiguration,
+    ) -> Result<SavedDevice, RepositoryError> {
+        let mut devices = self.devices.lock().unwrap();
+        let device = devices
+            .iter_mut()
+            .find(|d| d.id == id)
+            .ok_or(RepositoryError::Corrupt)?;
+        device.sources = sources;
+        Ok(device.clone())
+    }
     fn commit_pairing(
         &self,
         _: &str,

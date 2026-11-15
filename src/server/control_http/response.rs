@@ -103,6 +103,8 @@ fn rejected(value: Rejection) -> ErrorCode {
         Rejection::Oversize => error(400, "input_too_large"),
         Rejection::InvalidConfirmation => error(400, "invalid_confirmation"),
         Rejection::WakeNotConfigured => error(412, "wake_not_configured"),
+        Rejection::SourceUnconfigured => error(412, "source_unconfigured"),
+        Rejection::SourceHidden => error(412, "source_hidden"),
         Rejection::MissingOperation => error(404, "not_found"),
         Rejection::InvalidObservation => error(409, "observation_expired"),
     }
@@ -207,6 +209,7 @@ pub fn device_detail(value: &SavedDevice, snapshot: &Snapshot) -> Value {
         .find(|(id, _)| *id == value.id)
         .map_or(0, |(_, r)| *r);
     let mut result = device(value, revision);
+    result["sources"] = json!(wire::Sources::from_configuration(&value.sources));
     let fallback = crate::application::capabilities::CapabilitySummary::unknown(
         value.id,
         crate::domain::capability::CapabilityReason::EvidenceMissing,
@@ -242,7 +245,18 @@ pub fn snapshot(value: &Snapshot) -> Value {
     let devices: Vec<_> = value
         .devices
         .iter()
-        .map(|d| device_detail(d, value))
+        .map(|d| {
+            let mut entry = device_detail(d, value);
+            // Bounded projection: only the selected TV carries labels; the
+            // others' facts still show which keys are offered.
+            if value.control.selected_device() != Some(d.id) {
+                entry
+                    .as_object_mut()
+                    .expect("device object")
+                    .remove("sources");
+            }
+            entry
+        })
         .collect();
     let recovery = recovery(value);
     json!({"server_epoch":wire::epoch(value.epoch),"revision":Counter(value.revision),"startup":startup,"admission_closed":value.admission_closed,

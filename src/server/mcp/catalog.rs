@@ -61,7 +61,7 @@ fn input_field(name: &str) -> Value {
         }
         "active_interface" => json!({"enum":["Wired","WiFi",null]}),
         "action" => {
-            json!({"enum":["PowerToggle","Up","Down","Left","Right","Enter","Back","Home","PlayPause","Play","Pause","Mute","VolumeUp","VolumeDown"]})
+            json!({"enum":["PowerToggle","Up","Down","Left","Right","Enter","Back","Home","PlayPause","Play","Pause","Mute","VolumeUp","VolumeDown","Hdmi1","Hdmi2","Hdmi3","Tuner","SourceMenu"]})
         }
         _ => uuid_schema(),
     }

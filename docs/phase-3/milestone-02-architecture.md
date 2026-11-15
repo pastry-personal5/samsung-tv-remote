@@ -1,34 +1,48 @@
 # P3-M2 Architecture: Sources
 
-Status: Proposal — planned 2026-11-14; names below describe the contract, not
-frozen Rust or JSON spelling.
+Status: Active — implemented offline 2026-11-15; see the
+[implementation record](milestone-02-implementation.md) for shipped spelling.
 
 ## Model
 
 Add five `RemoteAction` values: `Hdmi1`, `Hdmi2`, `Hdmi3`, `Tuner`, and
 `SourceMenu`. They join `ENCODED_ACTIONS` but not `LIVE_ACTIONS`, which drives
 the Remote view and `control_state` statuses. The Sources view owns their
-presentation. `samsung/codec.rs` holds the only production mapping
-(`KEY_HDMI1`–`KEY_HDMI3`, `KEY_TV`, `KEY_SOURCE`). The diagnostic controller
-reuses that mapping rather than keeping its own copy.
+presentation. `samsung/codec.rs` holds the production mapping
+(`KEY_HDMI1`–`KEY_HDMI3`, `KEY_TV`, `KEY_SOURCE`).
+
+`RemoteAction` serializes with serde's default PascalCase on HTTP, native and
+MCP (`"VolumeUp"` today), so the wire names are exactly `Hdmi1`, `Hdmi2`,
+`Hdmi3`, `Tuner` and `SourceMenu`; `request.rs` and `projection.rs` already
+use serde, not a separate table. `CapabilityKey` is snake_case. The one
+action-to-fact map is `Hdmi1..Tuner` → `hdmi1..tuner` and `SourceMenu` →
+`sources`; write it once in the domain and test it.
+
+`samsung/diagnostic.rs` keeps its own `SourceKey` mapping under the frozen
+[M1 diagnostic contract](milestone-01-diagnostic-contract.md), behind the
+`p3-spike` feature, and a signed candidate already exists. M2 changes no
+production code in it. A test-only block there, run with `--features
+p3-spike`, asserts that both maps produce identical frames (`encode` is
+private to that module); dedupe only after M1 closes.
 
 `SourceConfiguration` belongs to `SavedDevice`, next to `wake`. For each of
 HDMI 1–3 and Tuner it holds one of three states:
 
 | State | Meaning | Admission | Capability fact |
 | --- | --- | --- | --- |
-| Unconfigured | Default for a new or migrated TV. | `not_sent` | `unknown` |
-| Hidden | User preference: do not offer. | `not_sent` | `unknown` |
+| Unconfigured | Default for a new or migrated TV. | Rejected, `source_unconfigured` | `unknown` |
+| Hidden | User preference: do not offer. | Rejected, `source_hidden` | `unknown` |
 | Shown(label?) | User chose to offer this key. | Admitted | `supported`, source `user_confirmation` |
 
 "Hidden" is a preference, not negative evidence. It never becomes
 `unsupported`. The Sources menu has no state: it is always admitted while
 connected, like Home or Back, and its fact stays `unknown`.
 
-**Tuner rule.** The phase plan says to offer the tuner "as an ordinary key". M2
-reads that as the ordinary remote path, not as always shown. Many setups have
-no antenna, so the tuner is configured like an HDMI port. Record this reading
-in the phase changelog.
+**Tuner rule (owner decision).** The phase plan says to offer the tuner
+and the Sources menu "as ordinary keys". M2 proposes reading that as the
+ordinary remote path, not as always shown: many setups have no antenna, so the
+tuner is configured like an HDMI port. This departs from the phase wording; the
+owner accepted it on 2026-11-15 (see the [changelog](changelog.md)).
 
 **Durable facts.** M1's `CapabilityFact::valid` requires a session context for
 every supported fact. Source-key facts come from durable user configuration
@@ -96,15 +110,21 @@ transaction, so M2 needs no sidecar and no new journal stage.
   records; it is not a safe merge with current credentials/trust. Document
   coordinated recovery of those stores before recommending a restore.
 - `pairing_journal.rs` serializes `PairingBackup.device` field by field (its
-  `wake` block). Add `sources` there, or re-pair recovery restores a TV with
-  its source configuration lost. Missing in an old backup means unconfigured.
+  `wake` block) into the shared `DiskDevice`. Add `sources` there, or re-pair
+  recovery restores a TV with its source configuration lost. `DiskBackup` has
+  `deny_unknown_fields`, but the nested `DiskDevice` does not, so today's
+  reader would silently drop `sources`; the envelope version is the only
+  fence. M2 therefore writes pairing backups as version 2 unconditionally and
+  reads versions 1 and 2. A missing `sources` in a v1 backup means
+  unconfigured.
 - Missing `sources` in v1/v2 and old pairing backups means unconfigured.
   Present malformed v3 data fails closed, including unknown/duplicate keys,
-  invalid states, labels on non-Shown entries and invalid timestamps. Bound
-  disk parsing and test 1,024 fully labelled TVs against the private-file read
-  limit separately from the HTTP limit. Version the pairing backup envelope
-  when writing source-bearing backups so old recovery code cannot silently
-  discard the new fields; retain reading of legacy backups.
+  invalid states, labels on non-Shown entries and invalid timestamps. Decode
+  `sources` into a typed struct with `deny_unknown_fields`, not the
+  `serde_json::Value` that `wake` uses: derived structs reject duplicate
+  fields, while `Value` silently keeps the last one. Bound disk parsing and
+  test 1,024 fully labelled TVs against the 4 MiB `MAX_FILE_BYTES` read limit
+  separately from the HTTP limit.
 - Re-pair clones the saved record and changes only label and host
   (`runtime_setup.rs`), so source configuration carries over just as Wake does.
 
@@ -123,20 +143,39 @@ missing, repeated and unknown entries before any disk effect. A source edit
 therefore makes a concurrent `set_wake` stale, and the reverse is also true;
 this is intended. `storage_write` currently takes `Option<WakeConfiguration>`,
 with `None` meaning Select. Replace that with a typed `StorageWrite::{Select,
-Wake, Sources}` rather than adding another overload. Carry the write kind
-through completion and uncertain-write reconciliation too: the current error
-path compares only `old.wake != new.wake`. Compare the sources and timestamps
-for source edits, reread authoritative storage before releasing the lane, and
-advance the shared revision when a write committed despite a lost
+Wake, Sources}` rather than adding another overload. Today `None` also
+triggers the session fence (cancel Wake, stop the session, reset playback).
+Only `Select` fences; a Sources edit, like a Wake edit, must not disconnect,
+so match `Select` explicitly rather than "not Wake". Carry the write kind
+through completion and uncertain-write reconciliation too: `Completion::Storage`
+carries `selection: bool`, and its error path bumps the revision of the first
+device with any `old.wake != new.wake`. Replace the bool with the write kind,
+scope the comparison to the write's target, and compare sources and
+timestamps for source edits. Reread authoritative storage before releasing the
+lane, and advance the shared revision when a write committed despite a lost
 acknowledgment. If reread fails, block further edits until reconciliation;
 never publish a speculative configuration or silently retry a timed-out write.
 
+`SetSources` must also join the target/generation arms of
+`Command::metadata` (`control_service.rs`) and the selection fence in
+`Runtime::execute`. Both end in a wildcard (`_ => (None, None)` and
+`_ => None`), so a missing arm compiles and silently skips the stale-selection
+fence. A test sends a stale-generation `SetSources` and expects
+`StaleSelection` with no write.
+
 Source keys reach the runtime as `Command::Remote`. In `queue_remote`, before
 `admit_remote`, an HDMI or Tuner action whose current configuration is not
-Shown is rejected as `not_sent`, distinguishing `SourceUnconfigured` from
-`SourceHidden` across HTTP, native and MCP reason mappings. Preserve the
-existing selection, pairing, connection, queue and storage-busy guards;
-configuration is an extra condition, never an alternative admission path.
+Shown is rejected. This is an admission rejection, not a `{"kind":"not_sent"}`
+result: `response.rs` maps admission `Rejection`s to HTTP error codes, and
+`not_sent` comes only from a queued request's terminal outcome. Follow the
+`WakeNotConfigured` precedent with top-level `Rejection::SourceUnconfigured`
+and `Rejection::SourceHidden`, both 412, codes `source_unconfigured` and
+`source_hidden`, mapped in HTTP, native and MCP. The request is still never
+sent; the user-facing wording is "not sent". Precedence is fixed and tested:
+stale selection (decided in `execute`) first, then source configuration, then
+the dispatcher's no-selection, pairing, connection and queue guards. So a
+hidden key on a disconnected TV reports `source_hidden`. Configuration is an
+extra condition, never an alternative admission path.
 Source keys never take the PowerToggle→Wake branch, never auto-connect and
 never repeat. The check uses configuration at admission time; a later edit does
 not cancel a queued key. State this in the editor: hiding prevents new
@@ -186,14 +225,19 @@ snapshot/SSE revision. No read performs a probe or write.
 
 **MCP.** Add the five names to `remote_action`'s `action` enum in `catalog.rs`
 and add the inspected TV's `sources` to `inspect_tv` (`tools.rs`, `results.rs`,
-result corpus). `list_tvs` stays compact. Whether MCP may edit labels is an
-open owner decision. The recommended default is GUI-only settings editing,
-while MCP reads configuration and sends stable port actions. Editing through
+result corpus). Labels are already bounded at 24 scalars, under MCP's
+80-character `MAX_TEXT_CHARS`, so they are returned whole with no
+`label_truncated` flag. `list_tvs` stays compact. The owner decided
+(2026-11-15) that settings editing is GUI-only, while MCP reads configuration
+and sends stable port actions. Note
+that MCP already edits Wake through `set_wake`: with the shared revision, a GUI
+source edit makes a pending MCP `set_wake` stale (`stale_config`), and the
+agent recovers by rereading `config_revision` from `inspect_tv`. Test that
+path. Editing through
 HTTP remains available to the authenticated GUI role; decide and test the
 route's client-role authorization explicitly. Reusing an existing MCP tool
 would still require a separate schema/policy decision and budget measurement.
-Measure the catalog and the result bytes, then pay for the growth with cuts or
-record an owner re-baseline before shipping.
+The catalog growth was measured and the owner re-baselined it on 2026-11-15.
 
 ## GUI
 
@@ -222,10 +266,10 @@ record an owner re-baseline before shipping.
 | Area | Files | Tests |
 | --- | --- | --- |
 | Domain | `domain/remote_action.rs`, `domain/capability.rs`, source configuration value types | Enum sets, `LIVE_ACTIONS` unchanged |
-| Codec | `infrastructure/samsung/codec.rs`, `samsung/diagnostic.rs` | Key mapping, diagnostic reuse |
-| Application | `device_repository.rs`, `control_service.rs`, `runtime.rs`, `capabilities.rs` | Admission, revision sharing, fact projection, validity |
+| Codec | `infrastructure/samsung/codec.rs` (`diagnostic.rs` unchanged) | Key mapping; `p3-spike` agreement test |
+| Application | `device_repository.rs`, `control_service.rs` (`Command::metadata`), `runtime.rs` (`execute` fence, `storage_write`, `Completion::Storage`, `queue_remote`), `capabilities.rs` | Admission precedence, stale-generation `SetSources`, no session fence on source save, revision sharing, fact projection, validity |
 | Storage | `infrastructure/preferences.rs`, `pairing_journal.rs` | v1/v2→v3, backup faults, disk bounds, Forget, versioned re-pair recovery |
-| HTTP | `control_http/request.rs`, `transport.rs`, `response.rs`, `control_client/projection.rs` | `tests/control_http.rs`, `tests/capabilities.rs`, `tests/control_response.rs`; framed size profile |
+| HTTP | `control_http/request.rs`, `transport.rs`, `response.rs` (`rejected`), `control_client/projection.rs` | `tests/control_http.rs`, `tests/capabilities.rs`, `tests/control_response.rs`; framed size profile |
 | MCP | `mcp/catalog.rs`, `tools.rs`, `results.rs` | Catalog bytes, `inspect_tv` corpus, HTTP agreement |
 | GUI | `presentation/iced/view.rs`, `view_model.rs`, `workflows.rs`, Settings page | `client_tests.rs` workflows |
 
